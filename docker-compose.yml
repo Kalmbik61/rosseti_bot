@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  rosseti-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rosseti-parser-bot
+    restart: unless-stopped
+    
+    # Переменные окружения
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Moscow
+    
+    # Подключение .env файла
+    env_file:
+      - .env
+    
+    # Монтирование volumes для персистентности данных
+    volumes:
+      # База данных подписок
+      - ./data:/app/data
+      # Логи приложения
+      - ./logs:/app/logs
+      # Сгенерированные отчеты
+      - ./reports:/app/reports
+      # Кеш Playwright (опционально, для ускорения)
+      - playwright-cache:/home/botuser/.cache/ms-playwright
+    
+    # Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+    
+    # Healthcheck
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('Bot is running')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Политика перезапуска
+    restart: unless-stopped
+    
+    # Логирование
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Дополнительный сервис для запуска API (опционально)
+  rosseti-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rosseti-parser-api
+    restart: "no"  # Запускается только вручную
+    
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Moscow
+    
+    env_file:
+      - .env
+    
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+      - playwright-cache:/home/botuser/.cache/ms-playwright
+    
+    # Переопределяем команду для запуска API
+    command: ["api"]
+    
+    # Открываем порт для API (если понадобится)
+    ports:
+      - "3000:3000"
+    
+    profiles:
+      - api  # Профиль для запуска только при необходимости
+
+volumes:
+  # Volume для кеша Playwright
+  playwright-cache:
+    driver: local
+
+networks:
+  default:
+    name: rosseti-parser-network

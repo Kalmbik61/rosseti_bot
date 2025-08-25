@@ -38,15 +38,15 @@ echo "✅ Проверки прошли успешно"
 case "$1" in
     "bot")
         echo "🤖 Запуск Telegram бота..."
-        exec node dist/bot.js
+        exec node public/bot.js
         ;;
     "api")
         echo "🔧 Запуск API демо..."
-        exec node dist/index.js
+        exec node public/index.js
         ;;
     "test")
         echo "🧪 Запуск тестов..."
-        exec node dist/tests/test.js
+        exec node public/tests/test.js
         ;;
     "bash")
         echo "🐚 Запуск bash сессии..."
@@ -61,6 +61,6 @@ case "$1" in
         echo "  bash  - Запуск bash сессии"
         echo ""
         echo "🤖 Запуск бота по умолчанию..."
-        exec node dist/bot.js
+        exec node public/bot.js
         ;;
 esac

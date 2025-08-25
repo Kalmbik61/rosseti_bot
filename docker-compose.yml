@@ -45,18 +45,12 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-    
-    # Политика перезапуска
-    restart: unless-stopped
-    
     # Логирование
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-
-  # Дополнительный сервис для запуска API (опционально)
   rosseti-api:
     build:
       context: .

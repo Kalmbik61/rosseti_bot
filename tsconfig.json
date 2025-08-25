@@ -6,7 +6,7 @@
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "allowJs": false,
-    "outDir": "./dist",
+    "outDir": "./public",
     "rootDir": "./src",
     "strict": true,
     "noImplicitAny": true,
@@ -30,7 +30,7 @@
   ],
   "exclude": [
     "node_modules",
-    "dist",
+    "public",
     "**/*.test.ts",
     "**/*.spec.ts"
   ],

@@ -48,7 +48,7 @@ logs/
 # Reports
 *.md
 !README.md
-!TELEGRAM_SETUP.md
+!DOCKER_SETUP.md
 
 # Reports folder
 reports/*

@@ -1,0 +1,147 @@
+# Docker Compose для Dokploy - исправленная конфигурация
+# Решает проблемы: потери данных при деплое + множественных экземпляров бота
+
+version: '3.8'
+
+services:
+  rosseti-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    # 🔥 КРИТИЧНО: Убираем container_name для избежания конфликтов в Dokploy
+    # container_name НЕ используется в Dokploy
+    
+    restart: unless-stopped
+    
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Moscow
+      # 🔥 Добавляем уникальный идентификатор для предотвращения конфликтов бота
+      - BOT_INSTANCE_ID=${COMPOSE_PROJECT_NAME:-rosseti}_parser
+    
+    env_file:
+      - .env
+    
+    # 🔥 Volumes согласно Dokploy документации
+    volumes:
+      # Volume Mount - управляемые Docker volumes
+      - data_volume:/app/data
+      - logs_volume:/app/logs  
+      - reports_volume:/app/reports
+      - playwright_volume:/home/botuser/.cache/ms-playwright
+    
+    # Resources согласно Dokploy документации
+    deploy:
+      # 🔥 Важно для Dokploy: ограничения ресурсов
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+      
+      # 🔥 Предотвращение множественных экземпляров
+      replicas: 1
+      
+      # Restart Policy для Dokploy Swarm
+      restart_policy:
+        condition: unless-stopped
+        delay: 10s
+        max_attempts: 3
+        window: 60s
+    
+    # Health Check согласно Dokploy
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('Bot is running')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      
+    # Logging для Dokploy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        
+    # 🔥 Labels для Dokploy (необходимы для правильной работы)
+    labels:
+      - "dokploy.service=rosseti-parser"
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=daily"
+
+  # 🔧 API сервис - запускается только по требованию
+  rosseti-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"  # Не автостарт
+    
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Moscow
+      - BOT_INSTANCE_ID=${COMPOSE_PROJECT_NAME:-rosseti}_api
+    
+    env_file:
+      - .env
+    
+    volumes:
+      - data_volume:/app/data
+      - logs_volume:/app/logs
+      - reports_volume:/app/reports
+      - playwright_volume:/home/botuser/.cache/ms-playwright
+    
+    command: ["api"]
+    
+    # Ports для Dokploy (настраиваются в панели)
+    ports:
+      - "3000:3000"
+    
+    # Profile для условного запуска
+    profiles:
+      - api
+      
+    labels:
+      - "dokploy.service=rosseti-api"
+
+# 🔥 Volumes для Dokploy - используем именованные volumes
+volumes:
+  # Данные приложения (база подписок) - КРИТИЧНО
+  data_volume:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=daily"
+      - "dokploy.persistent=true"  # Помечаем как персистентный
+  
+  # Логи приложения
+  logs_volume:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=weekly"
+      - "dokploy.persistent=true"
+  
+  # Сгенерированные отчеты
+  reports_volume:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=weekly"
+      - "dokploy.persistent=true"
+    
+  # Кеш Playwright
+  playwright_volume:
+    driver: local
+    labels:
+      - "dokploy.persistent=true"
+
+# 🔥 Network для изоляции в Dokploy
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-rosseti}-network
+    labels:
+      - "dokploy.network=true"

@@ -15,7 +15,9 @@ import {
   logger,
   getLatestReportInfo,
   SubscriptionManager,
+  DatabaseManager,
   ADMIN_CHAT_IDS,
+  escapeMarkdown,
 } from "./utils/index.js";
 import type { PowerOutageInfo } from "./utils/types.js";
 
@@ -105,6 +107,14 @@ export class PowerOutageBot {
         {
           command: "admin_unsubscribe_all",
           description: "🗑️ Отписать всех пользователей",
+        },
+        {
+          command: "admin_search",
+          description: "🔍 Поиск отключений в БД",
+        },
+        {
+          command: "admin_analytics",
+          description: "📈 Аналитика отключений",
         },
       ];
 
@@ -318,6 +328,22 @@ export class PowerOutageBot {
     this.bot.onText(/\/confirm_unsubscribe_all/, async (msg) => {
       if (this.isAdmin(msg.from?.id)) {
         await this.handleConfirmUnsubscribeAllCommand(msg);
+      } else {
+        await this.sendAccessDeniedMessage(msg.chat.id);
+      }
+    });
+
+    this.bot.onText(/\/admin_search/, async (msg) => {
+      if (this.isAdmin(msg.from?.id)) {
+        await this.handleAdminSearchCommand(msg);
+      } else {
+        await this.sendAccessDeniedMessage(msg.chat.id);
+      }
+    });
+
+    this.bot.onText(/\/admin_analytics/, async (msg) => {
+      if (this.isAdmin(msg.from?.id)) {
+        await this.handleAdminAnalyticsCommand(msg);
       } else {
         await this.sendAccessDeniedMessage(msg.chat.id);
       }
@@ -545,13 +571,19 @@ export class PowerOutageBot {
         ? formatDateForDisplay(sub.lastNotified)
         : "никогда";
 
-      // Текстовая информация
-      message += `${globalIndex}. **${firstName}** (${username})\n`;
-      message += `   💬 Chat ID: \`${sub.chatId}\`\n`;
-      message += `   📅 Подписан: ${subscribedDate}\n`;
-      message += `   🔔 Последнее уведомление: ${lastNotified}\n\n`;
+      // Экранируем данные для безопасного отображения в Markdown
+      const safeFirstName = escapeMarkdown(firstName);
+      const safeUsername = escapeMarkdown(username);
+      const safeSubscribedDate = escapeMarkdown(subscribedDate);
+      const safeLastNotified = escapeMarkdown(lastNotified);
 
-      // Кнопка для отписки
+      // Текстовая информация
+      message += `${globalIndex}\\. **${safeFirstName}** \\(${safeUsername}\\)\n`;
+      message += `   💬 Chat ID: \`${sub.chatId}\`\n`;
+      message += `   📅 Подписан: ${safeSubscribedDate}\n`;
+      message += `   🔔 Последнее уведомление: ${safeLastNotified}\n\n`;
+
+      // Кнопка для отписки (в кнопках экранирование не нужно)
       const buttonText = `❌ ${firstName} (${sub.chatId})`;
       const callbackData = `unsubscribe_${sub.chatId}`;
 
@@ -1680,6 +1712,203 @@ ${
     }
 
     return summary;
+  }
+
+  /**
+   * Админская команда: поиск отключений в БД
+   */
+  private async handleAdminSearchCommand(
+    msg: TelegramBot.Message
+  ): Promise<void> {
+    const chatId = msg.chat.id;
+    const messageText = msg.text;
+
+    try {
+      logger.info(`Admin: Запрос поиска отключений от админа ${msg.from?.id}`);
+
+      // Парсим параметры поиска из сообщения
+      const params = messageText?.split(" ").slice(1) || [];
+
+      if (params.length === 0) {
+        const helpMessage = `
+🔍 *Поиск отключений в БД*
+
+Использование:
+\`/admin_search [параметры]\`
+
+**Примеры:**
+• \`/admin_search Приозерский\` - по району
+• \`/admin_search место:Приозерск\` - по месту  
+• \`/admin_search дата:15.01.2025\` - по дате
+• \`/admin_search район:Приозерский место:Кузнечное\` - комбинированный поиск
+
+**Параметры:**
+• \`район:название\` - поиск по району
+• \`место:название\` - поиск по месту
+• \`дата:дд.мм.гггг\` - поиск по дате от
+• \`лимит:число\` - максимум результатов (по умолчанию 10)
+`;
+
+        await this.bot.sendMessage(chatId, helpMessage, {
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      // Парсим параметры
+      const filters: any = { limit: 10 };
+
+      for (const param of params) {
+        if (param.includes(":")) {
+          const [key, value] = param.split(":");
+          switch (key?.toLowerCase()) {
+            case "район":
+            case "district":
+              filters.district = value;
+              break;
+            case "место":
+            case "place":
+              filters.place = value;
+              break;
+            case "дата":
+            case "date":
+              filters.dateFrom = value;
+              break;
+            case "лимит":
+            case "limit":
+              filters.limit = parseInt(value || "10", 10);
+              break;
+          }
+        } else {
+          // Если нет двоеточия, считаем что это район
+          filters.district = param;
+        }
+      }
+
+      const db = new DatabaseManager();
+      await db.initialize();
+
+      const results = db.searchOutages(filters);
+      db.close();
+
+      if (results.length === 0) {
+        await this.bot.sendMessage(
+          chatId,
+          "🔍 По вашему запросу ничего не найдено.",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      let message = `🔍 *Результаты поиска* (найдено: ${results.length})\n\n`;
+
+      results.forEach((result, index) => {
+        const safePlace = escapeMarkdown(result.place || "Не указано");
+        const safeDistrict = escapeMarkdown(result.district || "Не указан");
+        const safeAddresses = escapeMarkdown(result.addresses || "Не указаны");
+        const safeReportFile = escapeMarkdown(result.reportFile || "Нет");
+
+        message += `${index + 1}\\. **${safePlace}** \\(${safeDistrict}\\)\n`;
+        message += `   📍 Адреса: ${safeAddresses}\n`;
+        message += `   📅 Период: ${result.dateFrom || "Не указан"} \\- ${
+          result.dateTo || "Не указан"
+        }\n`;
+        message += `   📄 Отчет: ${safeReportFile}\n`;
+        message += `   🕐 Добавлено: ${new Date(
+          result.createdAt
+        ).toLocaleDateString("ru-RU")}\n\n`;
+      });
+
+      await this.bot.sendMessage(chatId, message, {
+        parse_mode: "Markdown",
+      });
+    } catch (error) {
+      logger.error("Telegram: Ошибка при поиске отключений:", error);
+
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Произошла ошибка при поиске:\n\`${(error as Error).message}\``,
+        { parse_mode: "Markdown" }
+      );
+    }
+  }
+
+  /**
+   * Админская команда: аналитика отключений
+   */
+  private async handleAdminAnalyticsCommand(
+    msg: TelegramBot.Message
+  ): Promise<void> {
+    const chatId = msg.chat.id;
+
+    try {
+      logger.info(`Admin: Запрос аналитики от админа ${msg.from?.id}`);
+
+      const db = new DatabaseManager();
+      await db.initialize();
+
+      const stats = db.getOutagesStats();
+
+      // Получаем последние 5 отключений для примера
+      const recentOutages = db.searchOutages({ limit: 5 });
+
+      // Получаем топ районов
+      const topDistricts = db.searchOutages({ limit: 100 });
+      const districtCounts = topDistricts.reduce((acc, outage) => {
+        const district = outage.district || "Не указан";
+        acc[district] = (acc[district] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+
+      const sortedDistricts = Object.entries(districtCounts)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 5);
+
+      db.close();
+
+      let message = `📈 *Аналитика отключений*\n\n`;
+
+      message += `📊 **Общая статистика:**\n`;
+      message += `• Всего отключений: ${stats.totalOutages}\n`;
+      message += `• Уникальных районов: ${stats.uniqueDistricts}\n`;
+      message += `• Уникальных мест: ${stats.uniquePlaces}\n`;
+      message += `• Последняя дата: ${
+        stats.lastOutageDate || "Нет данных"
+      }\n\n`;
+
+      if (sortedDistricts.length > 0) {
+        message += `🏆 **Топ районов по количеству отключений:**\n`;
+        sortedDistricts.forEach(([district, count], index) => {
+          const safeDistrict = escapeMarkdown(district);
+          message += `${index + 1}\\. ${safeDistrict}: ${count} отключений\n`;
+        });
+        message += `\n`;
+      }
+
+      if (recentOutages.length > 0) {
+        message += `🕐 **Последние отключения:**\n`;
+        recentOutages.slice(0, 3).forEach((outage, index) => {
+          const safePlace = escapeMarkdown(outage.place || "Не указано");
+          const safeDistrict = escapeMarkdown(outage.district || "Не указан");
+          message += `${index + 1}\\. ${safePlace} \\(${safeDistrict}\\)\n`;
+          message += `   📅 ${outage.dateFrom || "Не указана"}\n`;
+        });
+      }
+
+      await this.bot.sendMessage(chatId, message, {
+        parse_mode: "Markdown",
+      });
+    } catch (error) {
+      logger.error("Telegram: Ошибка при получении аналитики:", error);
+
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Произошла ошибка при получении аналитики:\n\`${
+          (error as Error).message
+        }\``,
+        { parse_mode: "Markdown" }
+      );
+    }
   }
 
   /**

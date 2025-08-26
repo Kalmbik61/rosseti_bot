@@ -31,6 +31,20 @@ export interface LastCheckRecord {
   resultsHash: string; // MD5 хеш результатов для быстрого сравнения
 }
 
+export interface PowerOutageRecord {
+  id: number;
+  district?: string;
+  place?: string;
+  addresses?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  energy?: string;
+  reportFile?: string;
+  contentHash: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class DatabaseManager {
   private db: Database.Database;
   private dbPath: string;
@@ -119,6 +133,32 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_check_history_time ON check_history(check_time DESC);
     `);
 
+    // Таблица отключений электроэнергии
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS power_outages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        district TEXT,
+        place TEXT,
+        addresses TEXT,
+        date_from TEXT,
+        date_to TEXT,
+        energy TEXT,
+        report_file TEXT, -- имя файла отчета
+        content_hash TEXT, -- хеш для дедупликации
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Индексы для таблицы отключений
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_outages_district ON power_outages(district);
+      CREATE INDEX IF NOT EXISTS idx_outages_place ON power_outages(place);
+      CREATE INDEX IF NOT EXISTS idx_outages_date_from ON power_outages(date_from);
+      CREATE INDEX IF NOT EXISTS idx_outages_created_at ON power_outages(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_outages_hash ON power_outages(content_hash);
+    `);
+
     logger.info("Database: Таблицы созданы/проверены");
   }
 
@@ -131,29 +171,73 @@ export class DatabaseManager {
     firstName?: string
   ): boolean {
     try {
-      const stmt = this.db.prepare(`
-        INSERT OR IGNORE INTO subscribers (chat_id, username, first_name, subscribed_at)
-        VALUES (?, ?, ?, ?)
+      // Сначала проверяем, существует ли уже запись
+      const checkStmt = this.db.prepare(`
+        SELECT is_active FROM subscribers WHERE chat_id = ?
       `);
+      const existingRecord = checkStmt.get(chatId) as
+        | { is_active: number }
+        | undefined;
 
-      const result = stmt.run(
-        chatId,
-        username || null,
-        firstName || null,
-        new Date().toISOString()
-      );
+      if (existingRecord) {
+        if (existingRecord.is_active === 1) {
+          // Пользователь уже активен
+          logger.info(`Database: Подписчик ${chatId} уже активен`);
+          return false;
+        } else {
+          // Пользователь отписан - реактивируем его
+          const updateStmt = this.db.prepare(`
+            UPDATE subscribers 
+            SET is_active = 1, 
+                username = ?, 
+                first_name = ?, 
+                subscribed_at = ?,
+                updated_at = ?
+            WHERE chat_id = ?
+          `);
 
-      const success = result.changes > 0;
+          const result = updateStmt.run(
+            username || null,
+            firstName || null,
+            new Date().toISOString(),
+            new Date().toISOString(),
+            chatId
+          );
 
-      if (success) {
-        logger.info(
-          `Database: Добавлен подписчик ${chatId} (@${username || "unknown"})`
-        );
+          const success = result.changes > 0;
+          if (success) {
+            logger.info(
+              `Database: Реактивирован подписчик ${chatId} (@${
+                username || "unknown"
+              })`
+            );
+          }
+          return success;
+        }
       } else {
-        logger.info(`Database: Подписчик ${chatId} уже существует`);
-      }
+        // Новый пользователь - создаем запись
+        const insertStmt = this.db.prepare(`
+          INSERT INTO subscribers (chat_id, username, first_name, subscribed_at)
+          VALUES (?, ?, ?, ?)
+        `);
 
-      return success;
+        const result = insertStmt.run(
+          chatId,
+          username || null,
+          firstName || null,
+          new Date().toISOString()
+        );
+
+        const success = result.changes > 0;
+        if (success) {
+          logger.info(
+            `Database: Добавлен новый подписчик ${chatId} (@${
+              username || "unknown"
+            })`
+          );
+        }
+        return success;
+      }
     } catch (error) {
       logger.error("Database: Ошибка добавления подписчика:", error);
       throw error;
@@ -405,6 +489,213 @@ export class DatabaseManager {
       .join("||");
 
     // Простой hash функция
+    let hash = 0;
+    for (let i = 0; i < hashString.length; i++) {
+      const char = hashString.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash = hash & hash; // Конвертируем в 32-битное число
+    }
+
+    return hash.toString(36);
+  }
+
+  /**
+   * Сохранение отключений в БД
+   */
+  saveOutages(outages: PowerOutageInfo[], reportFile?: string): number {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO power_outages (
+          district, place, addresses, date_from, date_to, energy, 
+          report_file, content_hash, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      let savedCount = 0;
+      const now = new Date().toISOString();
+
+      for (const outage of outages) {
+        const contentHash = this.hashSingleOutage(outage);
+
+        // Проверяем существование записи с таким же хешем
+        const existing = this.db
+          .prepare(
+            `
+          SELECT id FROM power_outages WHERE content_hash = ?
+        `
+          )
+          .get(contentHash);
+
+        if (!existing) {
+          const result = stmt.run(
+            outage.district || null,
+            outage.place || null,
+            outage.addresses || null,
+            outage.dateFrom || null,
+            outage.dateTo || null,
+            outage.energy || null,
+            reportFile || null,
+            contentHash,
+            now,
+            now
+          );
+
+          if (result.changes > 0) {
+            savedCount++;
+          }
+        }
+      }
+
+      if (savedCount > 0) {
+        logger.info(`Database: Сохранено ${savedCount} новых отключений`);
+      }
+
+      return savedCount;
+    } catch (error) {
+      logger.error("Database: Ошибка сохранения отключений:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Поиск отключений в БД
+   */
+  searchOutages(filters: {
+    district?: string;
+    place?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+  }): PowerOutageRecord[] {
+    try {
+      let query = `
+        SELECT 
+          id, district, place, addresses, 
+          date_from as dateFrom, date_to as dateTo, energy, 
+          report_file as reportFile, content_hash as contentHash,
+          created_at as createdAt, updated_at as updatedAt
+        FROM power_outages 
+        WHERE 1=1
+      `;
+      const params: any[] = [];
+
+      if (filters.district) {
+        query += ` AND district LIKE ?`;
+        params.push(`%${filters.district}%`);
+      }
+
+      if (filters.place) {
+        query += ` AND place LIKE ?`;
+        params.push(`%${filters.place}%`);
+      }
+
+      if (filters.dateFrom) {
+        query += ` AND date_from >= ?`;
+        params.push(filters.dateFrom);
+      }
+
+      if (filters.dateTo) {
+        query += ` AND date_to <= ?`;
+        params.push(filters.dateTo);
+      }
+
+      query += ` ORDER BY created_at DESC`;
+
+      if (filters.limit) {
+        query += ` LIMIT ?`;
+        params.push(filters.limit);
+      }
+
+      const stmt = this.db.prepare(query);
+      const rows = stmt.all(...params) as PowerOutageRecord[];
+
+      return rows;
+    } catch (error) {
+      logger.error("Database: Ошибка поиска отключений:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Получение статистики по отключениям
+   */
+  getOutagesStats(): {
+    totalOutages: number;
+    uniqueDistricts: number;
+    uniquePlaces: number;
+    lastOutageDate?: string;
+  } {
+    try {
+      const totalStmt = this.db.prepare(`
+        SELECT COUNT(*) as count FROM power_outages
+      `);
+      const total = totalStmt.get() as { count: number };
+
+      const districtsStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT district) as count FROM power_outages WHERE district IS NOT NULL
+      `);
+      const districts = districtsStmt.get() as { count: number };
+
+      const placesStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT place) as count FROM power_outages WHERE place IS NOT NULL
+      `);
+      const places = placesStmt.get() as { count: number };
+
+      const lastDateStmt = this.db.prepare(`
+        SELECT date_from FROM power_outages 
+        WHERE date_from IS NOT NULL 
+        ORDER BY created_at DESC 
+        LIMIT 1
+      `);
+      const lastDate = lastDateStmt.get() as { date_from: string } | undefined;
+
+      const result = {
+        totalOutages: total.count,
+        uniqueDistricts: districts.count,
+        uniquePlaces: places.count,
+        ...(lastDate?.date_from && { lastOutageDate: lastDate.date_from }),
+      };
+
+      return result;
+    } catch (error) {
+      logger.error("Database: Ошибка получения статистики отключений:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Удаление отключений по фильтру (для тестов и очистки)
+   */
+  deleteOutages(filter: { reportFile?: string }): number {
+    try {
+      let query = `DELETE FROM power_outages WHERE 1=1`;
+      const params: any[] = [];
+
+      if (filter.reportFile) {
+        query += ` AND report_file LIKE ?`;
+        params.push(`%${filter.reportFile}%`);
+      }
+
+      const stmt = this.db.prepare(query);
+      const result = stmt.run(...params);
+
+      logger.info(`Database: Удалено ${result.changes} записей отключений`);
+      return result.changes;
+    } catch (error) {
+      logger.error("Database: Ошибка удаления отключений:", error);
+      throw error;
+    }
+  }
+
+  /**
+   * Создание хеша для одного отключения
+   */
+  private hashSingleOutage(outage: PowerOutageInfo): string {
+    const hashString = `${outage.place || ""}|${outage.dateFrom || ""}|${
+      outage.dateTo || ""
+    }|${outage.addresses || ""}`;
+
+    // Простая hash функция
     let hash = 0;
     for (let i = 0; i < hashString.length; i++) {
       const char = hashString.charCodeAt(i);

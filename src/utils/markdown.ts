@@ -6,6 +6,40 @@ import { MY_PLACE } from "../config.js";
 import type { PowerOutageInfo } from "./types.js";
 
 /**
+ * Экранирование специальных символов для Telegram Markdown
+ */
+export function escapeMarkdownV2(text: string): string {
+  // Символы, которые нужно экранировать в MarkdownV2
+  const specialChars = /([_*\[\]()~`>#+=|{}.!-])/g;
+  return text.replace(specialChars, "\\$1");
+}
+
+/**
+ * Безопасное экранирование для обычного Markdown (как используется в боте)
+ */
+export function escapeMarkdown(text: string): string {
+  // Основные символы, которые могут конфликтовать в базовом Markdown
+  return text
+    .replace(/\*/g, "\\*")
+    .replace(/_/g, "\\_")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    .replace(/~/g, "\\~")
+    .replace(/`/g, "\\`")
+    .replace(/>/g, "\\>")
+    .replace(/#/g, "\\#")
+    .replace(/\+/g, "\\+")
+    .replace(/=/g, "\\=")
+    .replace(/\|/g, "\\|")
+    .replace(/\{/g, "\\{")
+    .replace(/\}/g, "\\}")
+    .replace(/\./g, "\\.")
+    .replace(/!/g, "\\!");
+}
+
+/**
  * Создание отчета об отключениях в формате Markdown
  */
 export function createPowerOutageMarkdownReport(
@@ -98,6 +132,32 @@ export async function savePowerOutageReport(
   await fs.writeFile(fullPath, markdown, "utf-8");
 
   console.log(`📄 Отчет сохранен в файл: ${fullPath}`);
+
+  // Сохраняем данные об отключениях в БД
+  try {
+    const { DatabaseManager } = await import("./database.js");
+    const db = new DatabaseManager();
+    await db.initialize();
+
+    const savedCount = db.saveOutages(outages, filename);
+    if (savedCount > 0) {
+      console.log(`📊 Сохранено в БД: ${savedCount} новых отключений`);
+    }
+
+    db.close();
+  } catch (error) {
+    console.error("⚠️ Ошибка при сохранении в БД:", error);
+    // Не бросаем ошибку, так как основная задача (сохранение файла) выполнена
+  }
+
+  // Выполняем ротацию отчетов (сохраняем максимум 10 файлов)
+  try {
+    const { rotateReports } = await import("./fileUtils.js");
+    await rotateReports(10);
+  } catch (error) {
+    console.error("⚠️ Ошибка при ротации отчетов:", error);
+    // Не бросаем ошибку, так как основная задача (сохранение) выполнена
+  }
 
   return fullPath;
 }

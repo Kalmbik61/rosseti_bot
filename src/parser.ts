@@ -11,6 +11,9 @@ import {
   findPriozeryeInRow,
   extractPowerOutageInfo,
   ParserCallLogger,
+  deduplicateOutagesByDate,
+  deduplicateOutagesByDateAndPlace,
+  getDeduplicationStats,
 } from "./utils/index.js";
 import type {
   PriozeryeRow,
@@ -234,7 +237,23 @@ async function searchPowerOutagesInPage(
     }
   }
 
-  return powerOutages;
+  // Применяем дедупликацию по дате И месту (более умная дедупликация)
+  const originalCount = powerOutages.length;
+  const deduplicatedOutages = deduplicateOutagesByDateAndPlace(powerOutages);
+
+  // Логируем статистику дедупликации
+  if (originalCount !== deduplicatedOutages.length) {
+    const stats = getDeduplicationStats(powerOutages, deduplicatedOutages);
+    logger.info(
+      `Дедупликация: было ${stats.originalCount}, стало ${
+        stats.deduplicatedCount
+      }, удалено ${stats.removedCount} дубликатов (${Math.round(
+        stats.deduplicationRatio * 100
+      )}%)`
+    );
+  }
+
+  return deduplicatedOutages;
 }
 
 /**

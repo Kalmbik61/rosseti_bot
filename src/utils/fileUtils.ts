@@ -89,3 +89,81 @@ export async function getLatestReportInfo(): Promise<{
     return null;
   }
 }
+
+/**
+ * Ротация отчетов - удаляет старые файлы, оставляя только maxFiles самых новых
+ */
+export async function rotateReports(maxFiles: number = 10): Promise<void> {
+  try {
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const { logger } = await import("./logger.js");
+
+    const reportsDir = path.resolve("reports");
+
+    // Проверяем существование папки reports
+    try {
+      await fs.access(reportsDir);
+    } catch {
+      return; // Папка не существует, нечего ротировать
+    }
+
+    // Читаем содержимое папки
+    const files = await fs.readdir(reportsDir);
+
+    // Фильтруем только .md файлы отчетов
+    const reportFiles = files.filter(
+      (file) =>
+        file.endsWith(".md") && !file.startsWith(".") && file.includes("report")
+    );
+
+    if (reportFiles.length <= maxFiles) {
+      return; // Файлов меньше лимита, ротация не нужна
+    }
+
+    // Получаем статистику файлов для сортировки по времени создания
+    const filesWithStats = await Promise.all(
+      reportFiles.map(async (file) => {
+        const fullPath = path.join(reportsDir, file);
+        const stats = await fs.stat(fullPath);
+        return {
+          file,
+          fullPath,
+          mtime: stats.mtime,
+        };
+      })
+    );
+
+    // Сортируем по времени модификации (новые сначала)
+    filesWithStats.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+
+    // Удаляем файлы сверх лимита
+    const filesToDelete = filesWithStats.slice(maxFiles);
+
+    if (filesToDelete.length > 0) {
+      logger.info(
+        `FileUtils: Ротация отчетов - удаляем ${filesToDelete.length} старых файлов`
+      );
+
+      for (const fileInfo of filesToDelete) {
+        try {
+          await fs.unlink(fileInfo.fullPath);
+          logger.info(`FileUtils: Удален старый отчет: ${fileInfo.file}`);
+        } catch (error) {
+          logger.error(
+            `FileUtils: Ошибка удаления файла ${fileInfo.file}:`,
+            error
+          );
+        }
+      }
+
+      logger.info(
+        `FileUtils: Ротация завершена. Осталось отчетов: ${
+          filesWithStats.length - filesToDelete.length
+        }`
+      );
+    }
+  } catch (error) {
+    console.error("Ошибка при ротации отчетов:", error);
+  }
+}

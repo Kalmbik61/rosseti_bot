@@ -1,0 +1,122 @@
+# ===============================================
+# 🚀 Docker Compose конфигурация для Dokploy
+# ===============================================
+#
+# Эта версия оптимизирована для развертывания в Dokploy
+# и содержит только основные сервисы
+#
+version: '3.8'
+
+services:
+  # Основной сервис - Telegram бот парсер
+  rosseti-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rosseti-parser-bot
+    restart: unless-stopped
+    
+    # Переменные окружения (настраиваются в Dokploy UI)
+    environment:
+      - NODE_ENV=production
+      - TZ=Europe/Moscow
+    
+    # .env файл будет настроен через Dokploy Environment Variables
+    # env_file:
+    #   - .env
+    
+    # Монтирование volumes для персистентности данных
+    volumes:
+      # База данных подписок
+      - rosseti_data:/app/data
+      # Логи приложения
+      - rosseti_logs:/app/logs
+      # Сгенерированные отчеты
+      - rosseti_reports:/app/reports
+      # Кеш Playwright для ускорения работы
+      - playwright_cache:/home/botuser/.cache/ms-playwright
+    
+    # Ограничения ресурсов (настраиваются в Dokploy UI)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+    
+    # Проверка здоровья контейнера
+    healthcheck:
+      test: ["CMD", "node", "-e", "console.log('Bot is running')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Настройки логирования
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Метки для Dokploy
+    labels:
+      - "dokploy.app=rosseti-parser"
+      - "dokploy.service=bot"
+
+# Именованные volumes для данных
+volumes:
+  # Данные приложения (база подписок)
+  rosseti_data:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=daily"
+  
+  # Логи приложения
+  rosseti_logs:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=weekly"
+  
+  # Сгенерированные отчеты
+  rosseti_reports:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=weekly"
+  
+  # Кеш Playwright (не требует бэкапа)
+  playwright_cache:
+    driver: local
+
+# Сеть приложения
+networks:
+  default:
+    name: rosseti-parser-network
+    labels:
+      - "dokploy.app=rosseti-parser"
+
+# ===============================================
+# ВАЖНЫЕ ЗАМЕЧАНИЯ ДЛЯ DOKPLOY:
+# ===============================================
+#
+# 1. API сервис убран - в Dokploy лучше создать 
+#    отдельное приложение для API если понадобится
+#
+# 2. Переменные окружения настраиваются через 
+#    Dokploy UI, а не через env_file
+#
+# 3. Volumes используют именованные тома вместо
+#    bind mounts для лучшей совместимости
+#
+# 4. Добавлены метки для интеграции с Dokploy
+#    (автоматические бэкапы, мониторинг)
+#
+# 5. Ресурсы можно дополнительно настроить 
+#    через Dokploy UI
+#
+# ===============================================

@@ -55,6 +55,7 @@ logs/
 !BACKUP_GUIDE.md
 !DEPLOY_GUIDE.md
 !QUICK_DEPLOY.md
+!DOKPLOY_GUIDE.md
 
 # Reports folder
 reports/*

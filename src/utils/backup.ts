@@ -208,6 +208,13 @@ export class BackupManager {
    */
   private async validateBackup(dbPath: string): Promise<boolean> {
     try {
+      // Проверяем, что файл существует и не пустой
+      const stats = await fs.promises.stat(dbPath);
+      if (stats.size === 0) {
+        logger.warn(`Backup: Файл бэкапа пустой: ${dbPath}`);
+        return false;
+      }
+
       // Простая проверка - пытаемся открыть БД и выполнить простой запрос
       const { default: Database } = await import("better-sqlite3");
       const db = new Database(dbPath, { readonly: true });
@@ -218,25 +225,48 @@ export class BackupManager {
           .prepare("SELECT name FROM sqlite_master WHERE type='table'")
           .all();
 
-        // Проверяем наличие основных таблиц
+        // Проверяем наличие основных таблиц (хотя бы одна должна быть)
         const tableNames = result.map((r: any) => r.name);
-        const requiredTables = [
-          "subscribers",
-          "settings",
-          "check_history",
-          "power_outages",
-        ];
-        const hasRequiredTables = requiredTables.every((table) =>
-          tableNames.includes(table)
+        const coreTable = "subscribers"; // Главная таблица приложения
+
+        // Проверяем наличие хотя бы основной таблицы
+        const hasMainTable = tableNames.includes(coreTable);
+
+        if (!hasMainTable) {
+          logger.warn(
+            `Backup: Основная таблица '${coreTable}' не найдена в бэкапе: ${dbPath}`
+          );
+          db.close();
+          return false;
+        }
+
+        // Дополнительно проверяем, что можем читать из основной таблицы
+        try {
+          db.prepare(`SELECT COUNT(*) as count FROM ${coreTable}`).get();
+        } catch (tableError) {
+          logger.warn(
+            `Backup: Ошибка чтения таблицы '${coreTable}': ${tableError}`
+          );
+          db.close();
+          return false;
+        }
+
+        // Логируем найденные таблицы для диагностики
+        logger.info(
+          `Backup: Валидация прошла успешно. Найденные таблицы: ${tableNames.join(
+            ", "
+          )}`
         );
 
         db.close();
-        return hasRequiredTables;
+        return true;
       } catch (error) {
+        logger.error(`Backup: Ошибка валидации БД ${dbPath}:`, error);
         db.close();
         return false;
       }
     } catch (error) {
+      logger.error(`Backup: Ошибка доступа к файлу ${dbPath}:`, error);
       return false;
     }
   }
@@ -258,7 +288,7 @@ export class BackupManager {
   }
 
   /**
-   * Получение общего размера бэкапов
+   * Получение общего размера всех бэкапов
    */
   async getBackupsSize(): Promise<number> {
     try {

@@ -406,6 +406,14 @@ export class PowerOutageBot {
       }
     });
 
+    this.bot.onText(/\/admin_backup_debug/, async (msg) => {
+      if (this.isAdmin(msg.from?.id)) {
+        await this.handleAdminBackupDebugCommand(msg);
+      } else {
+        await this.sendAccessDeniedMessage(msg.chat.id);
+      }
+    });
+
     // Обработчик callback запросов (inline кнопки)
     this.bot.on("callback_query", async (callbackQuery) => {
       const msg = callbackQuery.message;
@@ -2401,18 +2409,30 @@ ${
 
       await this.bot.sendMessage(chatId, "💾 Создание бэкапа базы данных...");
 
+      // Дополнительная диагностика перед созданием бэкапа
+      const dbSize = await backupManager.getDatabaseSize();
+      logger.info(`Admin: Размер исходной БД: ${dbSize} байт`);
+
       const backupPath = await backupManager.createBackup();
       const stats = await backupManager.getDatabaseSize();
       const backupsSize = await backupManager.getBackupsSize();
       const backups = await backupManager.listBackups();
       const validBackups = backups.filter((b) => b.isValid);
+      const invalidBackups = backups.filter((b) => !b.isValid);
 
-      const message = `✅ *Бэкап успешно создан*
+      let message = `✅ *Бэкап успешно создан*
 
 📁 **Информация:**
 • Файл: \`${escapeMarkdown(backupPath.split("/").pop() || "")}\`
 • Размер БД: ${this.formatFileSize(stats)}
-• Всего бэкапов: ${validBackups.length}
+• Всего бэкапов: ${validBackups.length}`;
+
+      if (invalidBackups.length > 0) {
+        message += `
+⚠️ Найдено поврежденных бэкапов: ${invalidBackups.length}`;
+      }
+
+      message += `
 • Общий размер: ${this.formatFileSize(backupsSize)}
 
 🔧 **Доступные команды:**
@@ -2430,6 +2450,108 @@ ${
         `❌ Произошла ошибка при создании бэкапа:\n\`${
           (error as Error).message
         }\``,
+        { parse_mode: "Markdown" }
+      );
+    }
+  }
+
+  /**
+   * Диагностическая команда для отладки проблем с бэкапами
+   */
+  private async handleAdminBackupDebugCommand(
+    msg: TelegramBot.Message
+  ): Promise<void> {
+    const chatId = msg.chat.id;
+
+    try {
+      logger.info(`Admin: Диагностика бэкапов от админа ${msg.from?.id}`);
+
+      await this.bot.sendMessage(chatId, "🔍 Диагностика системы бэкапов...");
+
+      const config = backupManager.getBackupConfig();
+      const dbSize = await backupManager.getDatabaseSize();
+      const backups = await backupManager.listBackups();
+      const validBackups = backups.filter((b) => b.isValid);
+      const invalidBackups = backups.filter((b) => !b.isValid);
+
+      // Проверка существования основной БД
+      const fs = await import("fs");
+      const dbExists = fs.existsSync(config.dbPath);
+      const backupDirExists = fs.existsSync(config.backupDir);
+
+      let message = `🔍 *Диагностика системы бэкапов*
+
+📋 **Конфигурация:**
+• Путь к БД: \`${escapeMarkdown(config.dbPath)}\`
+• Папка бэкапов: \`${escapeMarkdown(config.backupDir)}\`
+• Макс. бэкапов: ${config.maxBackups}
+
+📊 **Состояние файлов:**
+• БД существует: ${dbExists ? "✅" : "❌"}
+• Размер БД: ${dbExists ? this.formatFileSize(dbSize) : "Н/Д"}
+• Папка бэкапов: ${backupDirExists ? "✅" : "❌"}
+
+📦 **Бэкапы:**
+• Всего файлов: ${backups.length}
+• Валидных: ${validBackups.length}
+• Поврежденных: ${invalidBackups.length}`;
+
+      if (invalidBackups.length > 0) {
+        message += `
+
+❌ **Поврежденные файлы:**`;
+        invalidBackups.slice(0, 3).forEach((backup, index) => {
+          message += `
+${index + 1}. \`${escapeMarkdown(backup.filename)}\``;
+        });
+        if (invalidBackups.length > 3) {
+          message += `
+... и еще ${invalidBackups.length - 3}`;
+        }
+      }
+
+      // Проверка таблиц в основной БД
+      if (dbExists) {
+        try {
+          const { default: Database } = await import("better-sqlite3");
+          const db = new Database(config.dbPath, { readonly: true });
+
+          const tables = db
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .all() as { name: string }[];
+
+          db.close();
+
+          message += `
+
+🗄️ **Таблицы в БД:**`;
+          tables.forEach((table) => {
+            message += `
+• \`${table.name}\``;
+          });
+        } catch (dbError) {
+          message += `
+
+❌ **Ошибка чтения БД:** ${(dbError as Error).message}`;
+        }
+      }
+
+      message += `
+
+🔧 **Команды для исправления:**
+• /admin\\_backup - создать новый бэкап
+• /admin\\_backup\\_list - список бэкапов
+• /admin\\_backup\\_debug - эта диагностика`;
+
+      await this.bot.sendMessage(chatId, message, {
+        parse_mode: "Markdown",
+      });
+    } catch (error) {
+      logger.error("Telegram: Ошибка диагностики бэкапов:", error);
+
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Ошибка диагностики: ${(error as Error).message}`,
         { parse_mode: "Markdown" }
       );
     }

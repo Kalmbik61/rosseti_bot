@@ -1,0 +1,36 @@
+# Docker Compose Override для автоматического применения named volumes
+# Этот файл автоматически применяется Docker Compose если присутствует
+version: '3.8'
+
+services:
+  rosseti-parser:
+    # Переопределяем volumes на named volumes для стабильности
+    volumes:
+      # КРИТИЧНО: используем named volumes вместо bind mounts
+      - rosseti_data:/app/data
+      - rosseti_logs:/app/logs
+      - rosseti_reports:/app/reports
+      - playwright_cache:/home/botuser/.cache/ms-playwright
+
+volumes:
+  # Именованные volumes сохраняются между деплоями
+  rosseti_data:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=daily"
+      
+  rosseti_logs:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=weekly"
+      
+  rosseti_reports:
+    driver: local
+    labels:
+      - "dokploy.backup=true"
+      - "dokploy.backup.schedule=weekly"
+      
+  playwright_cache:
+    driver: local

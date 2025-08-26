@@ -19,12 +19,12 @@ services:
     
     # Монтирование volumes для персистентности данных
     volumes:
-      # База данных подписок
-      - ./data:/app/data
-      # Логи приложения
-      - ./logs:/app/logs
+      # База данных подписок - используем named volume для стабильности
+      - rosseti_data:/app/data
+      # Логи приложения  
+      - rosseti_logs:/app/logs
       # Сгенерированные отчеты
-      - ./reports:/app/reports
+      - rosseti_reports:/app/reports
       # Кеш Playwright (опционально, для ускорения)
       - playwright-cache:/home/botuser/.cache/ms-playwright
     
@@ -66,9 +66,9 @@ services:
       - .env
     
     volumes:
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./reports:/app/reports
+      - rosseti_data:/app/data
+      - rosseti_logs:/app/logs
+      - rosseti_reports:/app/reports
       - playwright-cache:/home/botuser/.cache/ms-playwright
     
     # Переопределяем команду для запуска API
@@ -82,6 +82,18 @@ services:
       - api  # Профиль для запуска только при необходимости
 
 volumes:
+  # Данные приложения (база подписок) - КРИТИЧНО для сохранения
+  rosseti_data:
+    driver: local
+  
+  # Логи приложения
+  rosseti_logs:
+    driver: local
+  
+  # Сгенерированные отчеты
+  rosseti_reports:
+    driver: local
+    
   # Volume для кеша Playwright
   playwright-cache:
     driver: local

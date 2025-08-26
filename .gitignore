@@ -54,6 +54,7 @@ logs/
 !DOCKER_SETUP.md
 !BACKUP_GUIDE.md
 !DEPLOY_GUIDE.md
+!QUICK_DEPLOY.md
 
 # Reports folder
 reports/*

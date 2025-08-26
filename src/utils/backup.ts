@@ -2,10 +2,10 @@
  * Утилита для создания и восстановления бэкапов SQLite базы данных
  */
 
-import fs from "fs";
-import path from "path";
+import * as fs from "fs";
+import * as path from "path";
 import { logger } from "./logger.js";
-import { fileUtils } from "./fileUtils.js";
+import { formatFileSize } from "./fileUtils.js";
 
 export interface BackupInfo {
   filename: string;
@@ -47,7 +47,10 @@ export class BackupManager {
       const timestamp =
         new Date().toISOString().replace(/[:.]/g, "-").split("T")[0] +
         "_" +
-        new Date().toTimeString().split(" ")[0].replace(/:/g, "-");
+        (new Date().toTimeString().split(" ")[0] || "00-00-00").replace(
+          /:/g,
+          "-"
+        );
 
       const backupName = customName || `backup_${timestamp}.db`;
       const backupPath = path.join(this.backupDir, backupName);
@@ -65,9 +68,7 @@ export class BackupManager {
 
       const stats = await fs.promises.stat(backupPath);
       logger.info(
-        `Backup: Создан бэкап ${backupName} (${fileUtils.formatFileSize(
-          stats.size
-        )})`
+        `Backup: Создан бэкап ${backupName} (${formatFileSize(stats.size)})`
       );
 
       // Очищаем старые бэкапы
@@ -119,7 +120,7 @@ export class BackupManager {
         logger.info(
           `Backup: БД успешно восстановлена из ${path.basename(
             backupPath
-          )} (${fileUtils.formatFileSize(stats.size)})`
+          )} (${formatFileSize(stats.size)})`
         );
       } catch (error) {
         // В случае ошибки восстанавливаем исходную БД
@@ -208,7 +209,7 @@ export class BackupManager {
   private async validateBackup(dbPath: string): Promise<boolean> {
     try {
       // Простая проверка - пытаемся открыть БД и выполнить простой запрос
-      const Database = (await import("better-sqlite3")).default;
+      const { default: Database } = await import("better-sqlite3");
       const db = new Database(dbPath, { readonly: true });
 
       try {

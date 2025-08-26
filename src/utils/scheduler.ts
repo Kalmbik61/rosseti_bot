@@ -11,8 +11,8 @@ export interface ScheduleTask {
   schedule: string;
   description: string;
   enabled: boolean;
-  lastRun?: Date;
-  nextRun?: Date;
+  lastRun?: Date | undefined;
+  nextRun?: Date | undefined;
 }
 
 export class Scheduler {
@@ -103,7 +103,7 @@ export class Scheduler {
     try {
       task.stop();
       config.enabled = false;
-      config.nextRun = undefined;
+      config.nextRun = undefined as Date | undefined;
 
       logger.info(`Scheduler: Задача '${taskName}' остановлена`);
       return true;
@@ -121,7 +121,11 @@ export class Scheduler {
 
     if (task) {
       try {
-        task.destroy();
+        if ("destroy" in task) {
+          (task as any).destroy();
+        } else {
+          task.stop();
+        }
         this.tasks.delete(taskName);
         this.taskConfigs.delete(taskName);
 
@@ -218,7 +222,7 @@ export class Scheduler {
       }
 
       // Для интервальных задач (каждые N часов)
-      if (hour.includes("*/")) {
+      if (hour && hour.includes("*/")) {
         const hourInterval = parseInt(hour.replace("*/", ""));
         const nextRun = new Date(now);
         const currentHour = now.getHours();
@@ -279,8 +283,8 @@ export class Scheduler {
   getStats(): {
     totalTasks: number;
     activeTasks: number;
-    lastBackup?: Date;
-    nextBackup?: Date;
+    lastBackup?: Date | undefined;
+    nextBackup?: Date | undefined;
   } {
     const tasks = this.getAllTasks();
     const backupTask = this.getTask("auto-backup");
@@ -288,8 +292,8 @@ export class Scheduler {
     return {
       totalTasks: tasks.length,
       activeTasks: tasks.filter((t) => t.enabled).length,
-      lastBackup: backupTask?.lastRun,
-      nextBackup: backupTask?.nextRun,
+      lastBackup: backupTask?.lastRun || undefined,
+      nextBackup: backupTask?.nextRun || undefined,
     };
   }
 
@@ -301,7 +305,11 @@ export class Scheduler {
     this.stopAll();
 
     for (const task of this.tasks.values()) {
-      task.destroy();
+      if ("destroy" in task) {
+        (task as any).destroy();
+      } else {
+        task.stop();
+      }
     }
 
     this.tasks.clear();

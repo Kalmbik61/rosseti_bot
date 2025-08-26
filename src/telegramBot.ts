@@ -363,14 +363,6 @@ export class PowerOutageBot {
       }
     });
 
-    this.bot.onText(/\/admin_backup/, async (msg) => {
-      if (this.isAdmin(msg.from?.id)) {
-        await this.handleAdminBackupCommand(msg);
-      } else {
-        await this.sendAccessDeniedMessage(msg.chat.id);
-      }
-    });
-
     this.bot.onText(/\/admin_backup_list/, async (msg) => {
       if (this.isAdmin(msg.from?.id)) {
         await this.handleAdminBackupListCommand(msg);
@@ -382,6 +374,14 @@ export class PowerOutageBot {
     this.bot.onText(/\/admin_backup_restore/, async (msg) => {
       if (this.isAdmin(msg.from?.id)) {
         await this.handleAdminBackupRestoreCommand(msg);
+      } else {
+        await this.sendAccessDeniedMessage(msg.chat.id);
+      }
+    });
+
+    this.bot.onText(/\/admin_backup$/, async (msg) => {
+      if (this.isAdmin(msg.from?.id)) {
+        await this.handleAdminBackupCommand(msg);
       } else {
         await this.sendAccessDeniedMessage(msg.chat.id);
       }
@@ -420,6 +420,43 @@ export class PowerOutageBot {
           show_alert: true,
         });
       }
+    });
+
+    // Обработчик произвольных сообщений (не команд)
+    this.bot.on("message", async (msg) => {
+      // Игнорируем команды (они обрабатываются выше)
+      if (msg.text?.startsWith("/")) {
+        return;
+      }
+
+      // Игнорируем системные сообщения
+      if (
+        msg.new_chat_members ||
+        msg.left_chat_member ||
+        msg.group_chat_created
+      ) {
+        return;
+      }
+
+      const chatId = msg.chat.id;
+      const helpMessage = `
+🤖 *Rosseti Parser Bot*
+
+Я работаю только с командами\\. 
+
+📋 Для получения справки по всем доступным командам используйте:
+/help
+
+✨ Основные команды:
+• /start \\- приветствие и информация
+• /search \\- поиск отключений электричества
+• /subscribe \\- подписаться на уведомления
+• /unsubscribe \\- отписаться от уведомлений
+`;
+
+      await this.bot.sendMessage(chatId, helpMessage, {
+        parse_mode: "MarkdownV2",
+      });
     });
   }
 
@@ -2114,8 +2151,8 @@ ${
 • Общий размер: ${this.formatFileSize(backupsSize)}
 
 🔧 **Доступные команды:**
-• /admin_backup_list - список всех бэкапов
-• /admin_backup_restore - восстановление из бэкапа`;
+• /admin\\_backup\\_list - список всех бэкапов
+• /admin\\_backup\\_restore - восстановление из бэкапа`;
 
       await this.bot.sendMessage(chatId, message, {
         parse_mode: "Markdown",
@@ -2186,8 +2223,8 @@ ${
       }
 
       message += `\n🔧 **Команды:**\n`;
-      message += `• /admin_backup \\- создать новый бэкап\n`;
-      message += `• /admin_backup_restore \\- восстановить из бэкапа`;
+      message += `• /admin\\_backup \\- создать новый бэкап\n`;
+      message += `• /admin\\_backup\\_restore \\- восстановить из бэкапа`;
 
       await this.bot.sendMessage(chatId, message, {
         parse_mode: "Markdown",

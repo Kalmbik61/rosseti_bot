@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rosseti-parser-bot
+    # container_name: rosseti-parser-bot  # Убираем фиксированное имя для избежания конфликтов
     restart: unless-stopped
     
     # Переменные окружения
@@ -55,7 +55,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: rosseti-parser-api
+    # container_name: rosseti-parser-api  # Убираем фиксированное имя для избежания конфликтов
     restart: "no"  # Запускается только вручную
     
     environment:

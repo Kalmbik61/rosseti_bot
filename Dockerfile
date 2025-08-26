@@ -94,12 +94,13 @@ COPY package*.json ./
 # Установка только production зависимостей
 RUN npm ci --only=production && npm cache clean --force
 
-# Установка Playwright chromium
-RUN npx playwright install chromium --with-deps
-
 # Создание необходимых директорий с правильными разрешениями
 RUN mkdir -p /app/data /app/logs /app/reports && \
     chown -R botuser:botuser /app
+
+# Установка Playwright chromium с правильными правами
+RUN npx playwright install chromium --with-deps && \
+    chown -R botuser:botuser /home/botuser/.cache
 
 # Копирование entrypoint скрипта
 COPY docker/entrypoint.sh /entrypoint.sh

@@ -34,6 +34,16 @@ fi
 
 echo "✅ Проверки прошли успешно"
 
+# Проверка и установка Playwright браузеров при необходимости
+CHROMIUM_PATH="/home/botuser/.cache/ms-playwright/chromium_headless_shell"
+if [ ! -d "$CHROMIUM_PATH" ] || [ -z "$(ls -A $CHROMIUM_PATH 2>/dev/null)" ]; then
+    echo "🌐 Установка Playwright браузеров..."
+    npx playwright install chromium --with-deps
+    echo "✅ Playwright браузеры установлены"
+else
+    echo "✅ Playwright браузеры уже установлены"
+fi
+
 # Запуск нужной команды
 case "$1" in
     "bot")

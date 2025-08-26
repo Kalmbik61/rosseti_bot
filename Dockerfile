@@ -15,8 +15,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Установка зависимостей
-RUN npm ci --only=production && npm cache clean --force
+# Установка всех зависимостей (включая dev для сборки)
+RUN npm ci && npm cache clean --force
 
 # Копирование исходного кода
 COPY src/ ./src/
@@ -87,10 +87,12 @@ RUN groupadd -r botuser && useradd -r -g botuser -G audio,video botuser \
 # Создание рабочей директории
 WORKDIR /app
 
-# Копирование зависимостей из builder stage
-COPY --from=builder /app/node_modules ./node_modules
+# Копирование собранного проекта из builder stage
 COPY --from=builder /app/public ./public
 COPY package*.json ./
+
+# Установка только production зависимостей
+RUN npm ci --only=production && npm cache clean --force
 
 # Установка Playwright chromium
 RUN npx playwright install chromium --with-deps

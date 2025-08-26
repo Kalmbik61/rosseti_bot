@@ -281,6 +281,9 @@ Build failed: check Dockerfile syntax
 
 # Логи запуска
 Container exited: check environment variables
+
+# Ошибка TypeScript компиляции
+sh: 1: tsc: not found
 ```
 
 **Решения:**
@@ -288,6 +291,7 @@ Container exited: check environment variables
 - Проверьте переменные окружения
 - Убедитесь в корректности Dockerfile
 - Проверьте доступность портов
+- **Ошибка "tsc: not found"** - обновите Dockerfile (исправлено в проекте)
 
 ### 2. Проблемы с памятью
 

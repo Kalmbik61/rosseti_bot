@@ -197,6 +197,38 @@ export class SubscriptionManager {
   /**
    * Оптимизация БД
    */
+  /**
+   * Получение текущего интервала обновления (в часах)
+   */
+  getUpdateInterval(): number {
+    try {
+      const intervalStr = this.db.getSetting("update_interval_hours");
+      return intervalStr ? parseInt(intervalStr, 10) : 6; // По умолчанию 6 часов
+    } catch (error) {
+      logger.error("SubscriptionManager: Ошибка получения интервала:", error);
+      return 6; // Значение по умолчанию
+    }
+  }
+
+  /**
+   * Установка интервала обновления (в часах)
+   */
+  setUpdateInterval(hours: number): void {
+    try {
+      if (hours < 1 || hours > 24) {
+        throw new Error("Интервал должен быть от 1 до 24 часов");
+      }
+
+      this.db.setSetting("update_interval_hours", hours.toString());
+      logger.info(
+        `SubscriptionManager: Установлен интервал обновления: ${hours} часов`
+      );
+    } catch (error) {
+      logger.error("SubscriptionManager: Ошибка установки интервала:", error);
+      throw error;
+    }
+  }
+
   vacuum(): void {
     try {
       this.db.vacuum();

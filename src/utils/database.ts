@@ -719,6 +719,41 @@ export class DatabaseManager {
   }
 
   /**
+   * Получение настройки из базы данных
+   */
+  getSetting(key: string): string | null {
+    try {
+      const stmt = this.db.prepare(`
+        SELECT value FROM settings WHERE key = ?
+      `);
+      const result = stmt.get(key) as { value: string } | undefined;
+      return result?.value || null;
+    } catch (error) {
+      logger.error(`Database: Ошибка получения настройки ${key}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Сохранение настройки в базу данных
+   */
+  setSetting(key: string, value: string): void {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT OR REPLACE INTO settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+      `);
+
+      stmt.run(key, value, new Date().toISOString());
+
+      logger.info(`Database: Сохранена настройка ${key} = ${value}`);
+    } catch (error) {
+      logger.error(`Database: Ошибка сохранения настройки ${key}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Оптимизация БД
    */
   vacuum(): void {

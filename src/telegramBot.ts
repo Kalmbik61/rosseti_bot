@@ -236,7 +236,13 @@ export class PowerOutageBot {
 • Если отчетов нет - сообщает об этом
 
 **/subscribe** - Подписаться на уведомления
-• Автоматическая проверка новых отключений каждые 6 часов
+• Автоматическая проверка новых отключений каждые ${this.subscriptionManager.getUpdateInterval()} час${
+        this.subscriptionManager.getUpdateInterval() === 1
+          ? ""
+          : this.subscriptionManager.getUpdateInterval() < 5
+          ? "а"
+          : "ов"
+      }
 • Уведомления приходят только при появлении новых результатов
 
 **/unsubscribe** - Отписаться от уведомлений
@@ -272,6 +278,11 @@ export class PowerOutageBot {
 • Отписать всех активных подписчиков
 • Двухэтапное подтверждение безопасности
 • Необратимая операция
+
+**/admin\\_set\\_interval** - Настройка интервала обновления
+• Изменение частоты проверки отключений (1-24 часа)
+• Формат: \`/admin_set_interval [часы]\`
+• Все пользователи получат уведомление об изменении
 `;
       }
 
@@ -342,6 +353,14 @@ export class PowerOutageBot {
     this.bot.onText(/\/confirm_unsubscribe_all/, async (msg) => {
       if (this.isAdmin(msg.from?.id)) {
         await this.handleConfirmUnsubscribeAllCommand(msg);
+      } else {
+        await this.sendAccessDeniedMessage(msg.chat.id);
+      }
+    });
+
+    this.bot.onText(/\/admin_set_interval/, async (msg) => {
+      if (this.isAdmin(msg.from?.id)) {
+        await this.handleAdminSetIntervalCommand(msg);
       } else {
         await this.sendAccessDeniedMessage(msg.chat.id);
       }
@@ -1520,6 +1539,207 @@ ${
   }
 
   /**
+   * Обработка команды настройки интервала /admin_set_interval
+   */
+  private async handleAdminSetIntervalCommand(
+    msg: TelegramBot.Message
+  ): Promise<void> {
+    const chatId = msg.chat.id;
+    const text = msg.text || "";
+
+    try {
+      // Проверяем формат команды
+      const match = text.match(/\/admin_set_interval\s+(\d+)/);
+
+      if (!match) {
+        const currentInterval = this.subscriptionManager.getUpdateInterval();
+
+        const helpMessage = `
+⚙️ *Настройка интервала обновления*
+
+📋 **Текущий интервал:** ${currentInterval} час${
+          currentInterval === 1 ? "" : currentInterval < 5 ? "а" : "ов"
+        }
+
+📝 **Формат команды:**
+\`/admin_set_interval [часы]\`
+
+**Примеры:**
+• \`/admin_set_interval 3\` - каждые 3 часа
+• \`/admin_set_interval 12\` - каждые 12 часов
+• \`/admin_set_interval 1\` - каждый час
+
+⚠️ **Ограничения:** от 1 до 24 часов
+📢 **Внимание:** Все пользователи получат уведомление об изменении
+`;
+
+        await this.bot.sendMessage(chatId, helpMessage, {
+          parse_mode: "Markdown",
+        });
+        return;
+      }
+
+      const newInterval = parseInt(match[1]!, 10);
+      const currentInterval = this.subscriptionManager.getUpdateInterval();
+
+      // Проверяем диапазон
+      if (newInterval < 1 || newInterval > 24) {
+        await this.bot.sendMessage(
+          chatId,
+          "❌ Интервал должен быть от 1 до 24 часов",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      // Если интервал не изменился
+      if (newInterval === currentInterval) {
+        await this.bot.sendMessage(
+          chatId,
+          `ℹ️ Интервал уже установлен на ${newInterval} час${
+            newInterval === 1 ? "" : newInterval < 5 ? "а" : "ов"
+          }`,
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+
+      // Устанавливаем новый интервал
+      this.subscriptionManager.setUpdateInterval(newInterval);
+
+      // Перезапускаем таймер с новым интервалом
+      this.restartNotificationChecker();
+
+      // Уведомляем администратора об успехе
+      const adminMessage = `
+✅ *Интервал обновления изменен!*
+
+🕐 **Старый интервал:** ${currentInterval} час${
+        currentInterval === 1 ? "" : currentInterval < 5 ? "а" : "ов"
+      }
+🕐 **Новый интервал:** ${newInterval} час${
+        newInterval === 1 ? "" : newInterval < 5 ? "а" : "ов"
+      }
+
+📢 Все подписчики получат уведомление об изменении
+⏰ Следующая проверка: через ${newInterval} час${
+        newInterval === 1 ? "" : newInterval < 5 ? "а" : "ов"
+      }
+`;
+
+      await this.bot.sendMessage(chatId, adminMessage, {
+        parse_mode: "Markdown",
+      });
+
+      // Отправляем уведомление всем подписчикам
+      await this.notifyUsersAboutIntervalChange(newInterval, currentInterval);
+    } catch (error) {
+      logger.error("Admin: Ошибка установки интервала:", error);
+      await this.bot.sendMessage(
+        chatId,
+        `❌ Ошибка установки интервала: ${(error as Error).message}`,
+        { parse_mode: "Markdown" }
+      );
+    }
+  }
+
+  /**
+   * Уведомление всех пользователей об изменении интервала
+   */
+  private async notifyUsersAboutIntervalChange(
+    newInterval: number,
+    oldInterval: number
+  ): Promise<void> {
+    try {
+      const subscribers = this.subscriptionManager.getSubscribers();
+
+      if (subscribers.length === 0) {
+        logger.info(
+          "Admin: Нет подписчиков для уведомления об изменении интервала"
+        );
+        return;
+      }
+
+      const userMessage = `
+🔄 *Обновление настроек уведомлений*
+
+⏰ **Интервал проверки изменен:**
+• Было: каждые ${oldInterval} час${
+        oldInterval === 1 ? "" : oldInterval < 5 ? "а" : "ов"
+      }
+• Стало: каждые ${newInterval} час${
+        newInterval === 1 ? "" : newInterval < 5 ? "а" : "ов"
+      }
+
+📱 Теперь вы будете получать уведомления о новых отключениях каждые ${newInterval} час${
+        newInterval === 1 ? "" : newInterval < 5 ? "а" : "ов"
+      }.
+
+🔕 Для отключения уведомлений используйте /unsubscribe
+`;
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const subscriber of subscribers) {
+        try {
+          await this.bot.sendMessage(subscriber.chatId, userMessage, {
+            parse_mode: "Markdown",
+          });
+          successCount++;
+        } catch (error) {
+          errorCount++;
+          logger.warn(
+            `Admin: Не удалось отправить уведомление об изменении интервала пользователю ${subscriber.chatId}:`,
+            error
+          );
+        }
+      }
+
+      logger.info(
+        `Admin: Уведомления об изменении интервала отправлены. Успешно: ${successCount}, ошибок: ${errorCount}`
+      );
+
+      // Уведомляем админов о результатах
+      const adminNotification = `
+📢 *Уведомления об изменении интервала отправлены*
+
+📊 **Статистика:**
+• Всего подписчиков: ${subscribers.length}
+• Успешно отправлено: ${successCount}
+• Ошибки: ${errorCount}
+• Эффективность: ${Math.round((successCount / subscribers.length) * 100)}%
+`;
+
+      await this.notifyAdmins(adminNotification);
+    } catch (error) {
+      logger.error(
+        "Admin: Ошибка уведомления пользователей об изменении интервала:",
+        error
+      );
+    }
+  }
+
+  /**
+   * Перезапуск системы проверки уведомлений с новым интервалом
+   */
+  private restartNotificationChecker(): void {
+    try {
+      // Останавливаем текущий таймер
+      this.stopNotificationChecker();
+
+      // Запускаем с новым интервалом
+      this.startNotificationChecker();
+
+      logger.info(
+        "Admin: Система проверки уведомлений перезапущена с новым интервалом"
+      );
+    } catch (error) {
+      logger.error("Admin: Ошибка перезапуска системы проверки:", error);
+    }
+  }
+
+  /**
    * Инициализация системы подписок
    */
   private async initializeSubscriptions(): Promise<void> {
@@ -1536,15 +1756,18 @@ ${
    * Запуск фонового процесса проверки новых отключений
    */
   private startNotificationChecker(): void {
-    // Проверяем каждые 6 часов (6 * 60 * 60 * 1000 мс)
-    const INTERVAL_MS = 6 * 60 * 60 * 1000;
+    // Получаем настраиваемый интервал из базы данных
+    const intervalHours = this.subscriptionManager.getUpdateInterval();
+    const INTERVAL_MS = intervalHours * 60 * 60 * 1000;
 
     this.notificationInterval = setInterval(async () => {
       await this.checkForNewOutagesAndNotify();
     }, INTERVAL_MS);
 
     logger.info(
-      "Telegram: Запущен фоновый процесс проверки отключений (каждые 6 часов)"
+      `Telegram: Запущен фоновый процесс проверки отключений (каждые ${intervalHours} час${
+        intervalHours === 1 ? "" : intervalHours < 5 ? "а" : "ов"
+      })`
     );
   }
 
@@ -1637,6 +1860,24 @@ ${
   }
 
   /**
+   * Отправка уведомления всем администраторам
+   */
+  private async notifyAdmins(message: string): Promise<void> {
+    for (const adminChatId of ADMIN_CHAT_IDS) {
+      try {
+        await this.bot.sendMessage(adminChatId, message, {
+          parse_mode: "Markdown",
+        });
+      } catch (error) {
+        logger.error(
+          `Telegram: Ошибка отправки уведомления админу ${adminChatId}:`,
+          error
+        );
+      }
+    }
+  }
+
+  /**
    * Обработка команды /subscribe
    */
   private async handleSubscribeCommand(
@@ -1660,12 +1901,17 @@ ${
       );
 
       if (success) {
+        // Получаем настраиваемый интервал из базы данных
+        const intervalHours = this.subscriptionManager.getUpdateInterval();
+
         const message = `
 ✅ *Подписка активирована!*
 
 🔔 Вы будете получать уведомления о новых отключениях в районе ${MY_PLACE}.
 
-⏰ Проверка происходит каждые 6 часов.
+⏰ Проверка происходит каждые ${intervalHours} час${
+          intervalHours === 1 ? "" : intervalHours < 5 ? "а" : "ов"
+        }.
 📲 Уведомления приходят только при появлении новых результатов.
 
 Для отключения используйте команду /unsubscribe
@@ -1674,6 +1920,25 @@ ${
         await this.bot.sendMessage(chatId, message, {
           parse_mode: "Markdown",
         });
+
+        // Уведомляем администраторов о новом подписчике
+        const adminNotification = `
+🆕 *Новый подписчик!*
+
+👤 Пользователь: ${firstName || "Неизвестно"} ${
+          username ? `(@${username})` : ""
+        }
+🆔 Chat ID: \`${chatId}\`
+⏰ Время подписки: ${new Date().toLocaleString("ru-RU", {
+          timeZone: "Europe/Moscow",
+        })}
+
+📊 Всего активных подписчиков: ${
+          this.subscriptionManager.getSubscribers().length
+        }
+`;
+
+        await this.notifyAdmins(adminNotification);
       } else {
         await this.bot.sendMessage(
           chatId,

@@ -65,6 +65,12 @@ export type {
   LastCheckRecord,
 } from "./database.js";
 
+// Бэкапы и планировщик
+export { BackupManager, backupManager } from "./backup.js";
+export { Scheduler, scheduler } from "./scheduler.js";
+export type { BackupInfo } from "./backup.js";
+export type { ScheduleTask } from "./scheduler.js";
+
 // Типы
 export type {
   PriozeryeRow,

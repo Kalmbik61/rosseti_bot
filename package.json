@@ -27,9 +27,11 @@
   "license": "MIT",
   "dependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/node-cron": "^3.0.11",
     "@types/node-telegram-bot-api": "^0.64.10",
     "better-sqlite3": "^12.2.0",
     "dotenv": "^17.2.1",
+    "node-cron": "^3.0.3",
     "node-telegram-bot-api": "^0.66.0",
     "playwright": "^1.55.0",
     "winston": "^3.11.0"

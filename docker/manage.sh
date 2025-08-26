@@ -55,7 +55,11 @@ show_help() {
     echo "  test          - Запустить тесты"
     echo "  clean         - Удалить все контейнеры и образы"
     echo "  backup        - Создать бэкап данных"
+    echo "  backup-db     - Создать бэкап только базы данных"
+    echo "  backup-list   - Показать список бэкапов"
+    echo "  backup-auto   - Настроить автоматические бэкапы"
     echo "  restore       - Восстановить данные из бэкапа"
+    echo "  restore-db    - Восстановить только базу данных"
     echo ""
     echo -e "${YELLOW}Примеры:${NC}"
     echo "  ./docker/manage.sh start"
@@ -184,35 +188,184 @@ clean_all() {
     fi
 }
 
-# Создание бэкапа
+# Создание полного бэкапа
 create_backup() {
     local backup_dir="backups"
-    local backup_file="$backup_dir/rosseti-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+    local backup_file="$backup_dir/rosseti-full-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
     
-    print_message "Создание бэкапа..."
+    print_message "Создание полного бэкапа..."
     mkdir -p "$backup_dir"
     
     tar -czf "$backup_file" data/ logs/ reports/ 2>/dev/null || true
     
     if [ -f "$backup_file" ]; then
-        print_success "Бэкап создан: $backup_file"
+        local size=$(du -h "$backup_file" | cut -f1)
+        print_success "Полный бэкап создан: $backup_file ($size)"
     else
         print_error "Ошибка создания бэкапа"
     fi
 }
 
-# Восстановление из бэкапа
+# Создание бэкапа только базы данных
+create_db_backup() {
+    print_message "Создание бэкапа базы данных..."
+    
+    if docker-compose ps | grep -q "rosseti-parser.*Up"; then
+        # Если контейнер запущен, используем его
+        docker-compose exec rosseti-parser node -e "
+            import('./dist/src/utils/backup.js').then(module => {
+                const { backupManager } = module;
+                return backupManager.createBackup();
+            }).then(path => {
+                console.log('Бэкап создан:', path);
+            }).catch(console.error);
+        "
+    else
+        # Если контейнер не запущен, запускаем временный
+        docker-compose run --rm rosseti-parser node -e "
+            import('./dist/src/utils/backup.js').then(module => {
+                const { backupManager } = module;
+                return backupManager.createBackup();
+            }).then(path => {
+                console.log('Бэкап создан:', path);
+            }).catch(console.error);
+        "
+    fi
+}
+
+# Показать список бэкапов
+list_backups() {
+    print_message "Список доступных бэкапов:"
+    
+    echo ""
+    echo "📁 Полные бэкапы (tar.gz):"
+    if [ -d "backups" ] && ls backups/*.tar.gz 1> /dev/null 2>&1; then
+        for backup in backups/*.tar.gz; do
+            local size=$(du -h "$backup" | cut -f1)
+            local date=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$backup" 2>/dev/null || stat -c "%y" "$backup" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
+            printf "  %-40s %8s  %s\n" "$(basename "$backup")" "$size" "$date"
+        done
+    else
+        echo "  Полные бэкапы не найдены"
+    fi
+    
+    echo ""
+    echo "🗄️ Бэкапы базы данных:"
+    if [ -d "data/backups" ] && ls data/backups/*.db 1> /dev/null 2>&1; then
+        for backup in data/backups/*.db; do
+            local size=$(du -h "$backup" | cut -f1)
+            local date=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$backup" 2>/dev/null || stat -c "%y" "$backup" 2>/dev/null | cut -d' ' -f1,2 | cut -d'.' -f1)
+            printf "  %-40s %8s  %s\n" "$(basename "$backup")" "$size" "$date"
+        done
+    else
+        echo "  Бэкапы БД не найдены"
+    fi
+    
+    echo ""
+    
+    # Показать общий размер бэкапов
+    local total_size=0
+    if [ -d "backups" ]; then
+        total_size=$(du -sh backups 2>/dev/null | cut -f1 || echo "0")
+        echo "Общий размер полных бэкапов: $total_size"
+    fi
+    
+    if [ -d "data/backups" ]; then
+        local db_size=$(du -sh data/backups 2>/dev/null | cut -f1 || echo "0")
+        echo "Общий размер бэкапов БД: $db_size"
+    fi
+}
+
+# Настройка автоматических бэкапов
+setup_auto_backup() {
+    print_message "Настройка автоматических бэкапов..."
+    
+    echo ""
+    echo "Выберите периодичность бэкапов:"
+    echo "1) Ежедневно в 3:00"
+    echo "2) Каждые 6 часов"
+    echo "3) Каждые 12 часов"
+    echo "4) Еженедельно (воскресенье в 2:00)"
+    echo "5) Показать текущие настройки cron"
+    echo "6) Удалить автобэкапы"
+    echo ""
+    
+    read -p "Выберите вариант (1-6): " choice
+    
+    case $choice in
+        1)
+            setup_cron_job "0 3 * * *" "daily"
+            ;;
+        2)
+            setup_cron_job "0 */6 * * *" "6h"
+            ;;
+        3)
+            setup_cron_job "0 */12 * * *" "12h"
+            ;;
+        4)
+            setup_cron_job "0 2 * * 0" "weekly"
+            ;;
+        5)
+            show_cron_jobs
+            ;;
+        6)
+            remove_cron_jobs
+            ;;
+        *)
+            print_error "Неверный выбор"
+            ;;
+    esac
+}
+
+# Установка cron job
+setup_cron_job() {
+    local schedule="$1"
+    local description="$2"
+    local script_path="$(pwd)/docker/manage.sh"
+    local log_path="$(pwd)/logs/backup-cron.log"
+    
+    # Создаем директорию логов если её нет
+    mkdir -p "$(pwd)/logs"
+    
+    # Удаляем старые задания
+    remove_cron_jobs
+    
+    # Добавляем новое задание
+    (crontab -l 2>/dev/null; echo "$schedule cd $(pwd) && $script_path backup-db >> $log_path 2>&1") | crontab -
+    
+    print_success "Автобэкап настроен ($description): $schedule"
+    print_message "Логи бэкапов: $log_path"
+}
+
+# Показать cron задания
+show_cron_jobs() {
+    echo ""
+    echo "Текущие cron задания для автобэкапов:"
+    crontab -l 2>/dev/null | grep "manage.sh backup" || echo "Автобэкапы не настроены"
+    echo ""
+}
+
+# Удалить cron задания
+remove_cron_jobs() {
+    local temp_cron=$(mktemp)
+    crontab -l 2>/dev/null | grep -v "manage.sh backup" > "$temp_cron" || true
+    crontab "$temp_cron"
+    rm "$temp_cron"
+    print_success "Автобэкапы отключены"
+}
+
+# Восстановление из полного бэкапа
 restore_backup() {
     local backup_dir="backups"
     
     if [ ! -d "$backup_dir" ]; then
-        print_error "Директория бэкапов не найдена"
+        print_error "Директория полных бэкапов не найдена"
         return 1
     fi
     
-    echo "Доступные бэкапы:"
+    echo "Доступные полные бэкапы:"
     ls -la "$backup_dir"/*.tar.gz 2>/dev/null || {
-        print_error "Бэкапы не найдены"
+        print_error "Полные бэкапы не найдены"
         return 1
     }
     
@@ -223,9 +376,74 @@ restore_backup() {
         read -p "Продолжить? (y/N): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            print_message "Восстановление из бэкапа..."
+            print_message "Восстановление из полного бэкапа..."
+            
+            # Останавливаем бота перед восстановлением
+            if docker-compose ps | grep -q "rosseti-parser.*Up"; then
+                print_message "Остановка бота..."
+                docker-compose stop rosseti-parser
+            fi
+            
             tar -xzf "$backup_dir/$backup_file"
             print_success "Данные восстановлены из $backup_file"
+            
+            print_message "Запуск бота..."
+            docker-compose start rosseti-parser
+        fi
+    else
+        print_error "Файл бэкапа не найден"
+    fi
+}
+
+# Восстановление базы данных
+restore_db_backup() {
+    local backup_dir="data/backups"
+    
+    if [ ! -d "$backup_dir" ]; then
+        print_error "Директория бэкапов БД не найдена"
+        return 1
+    fi
+    
+    echo "Доступные бэкапы базы данных:"
+    ls -la "$backup_dir"/*.db 2>/dev/null || {
+        print_error "Бэкапы БД не найдены"
+        return 1
+    }
+    
+    read -p "Введите имя файла бэкапа БД: " backup_file
+    
+    if [ -f "$backup_dir/$backup_file" ]; then
+        print_warning "Это перезапишет текущую базу данных!"
+        read -p "Продолжить? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            print_message "Восстановление базы данных..."
+            
+            # Останавливаем бота
+            local was_running=false
+            if docker-compose ps | grep -q "rosseti-parser.*Up"; then
+                was_running=true
+                print_message "Остановка бота..."
+                docker-compose stop rosseti-parser
+            fi
+            
+            # Восстанавливаем БД через утилиту
+            docker-compose run --rm rosseti-parser node -e "
+                import('./dist/src/utils/backup.js').then(module => {
+                    const { backupManager } = module;
+                    return backupManager.restoreFromBackup('/app/data/backups/$backup_file');
+                }).then(() => {
+                    console.log('База данных восстановлена успешно');
+                }).catch(console.error);
+            "
+            
+            # Запускаем бота если он был запущен
+            if [ "$was_running" = true ]; then
+                print_message "Запуск бота..."
+                docker-compose start rosseti-parser
+            fi
+            
+            print_success "База данных восстановлена из $backup_file"
         fi
     else
         print_error "Файл бэкапа не найден"
@@ -273,8 +491,20 @@ main() {
         "backup")
             create_backup
             ;;
+        "backup-db")
+            create_db_backup
+            ;;
+        "backup-list")
+            list_backups
+            ;;
+        "backup-auto")
+            setup_auto_backup
+            ;;
         "restore")
             restore_backup
+            ;;
+        "restore-db")
+            restore_db_backup
             ;;
         "help"|"--help"|"-h")
             show_help

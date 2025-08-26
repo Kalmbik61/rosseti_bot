@@ -52,6 +52,8 @@ logs/
 *.md
 !README.md
 !DOCKER_SETUP.md
+!BACKUP_GUIDE.md
+!DEPLOY_GUIDE.md
 
 # Reports folder
 reports/*

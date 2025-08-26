@@ -257,21 +257,27 @@ async function searchPowerOutagesInPage(
 }
 
 /**
- * Быстрый поиск за последние N дней
+ * Быстрый поиск за последние N дней (симметрично от текущей даты)
+ * При days=30: ищет 15 дней назад + 15 дней вперед от сегодня
  */
 export async function quickFindPriozerie(
   days: number = 30
 ): Promise<PriozeryeRow[]> {
   const today = new Date();
-  const dateFrom = new Date(today);
-  dateFrom.setDate(today.getDate() - days);
+  const halfDays = Math.floor(days / 2);
 
-  const url = buildSearchUrl(dateFrom, today);
+  const dateFrom = new Date(today);
+  dateFrom.setDate(today.getDate() - halfDays);
+
+  const dateTo = new Date(today);
+  dateTo.setDate(today.getDate() + halfDays);
+
+  const url = buildSearchUrl(dateFrom, dateTo);
   const callLogger = new ParserCallLogger(
     "quickFind",
     url,
     "GET",
-    { days },
+    { days, dateRange: `${halfDays} дней назад + ${halfDays} дней вперед` },
     MY_PLACE
   );
 
@@ -287,21 +293,27 @@ export async function quickFindPriozerie(
 }
 
 /**
- * Быстрый поиск отключений для MY_PLACE за последние N дней
+ * Быстрый поиск отключений для MY_PLACE за последние N дней (симметрично от текущей даты)
+ * При days=30: ищет 15 дней назад + 15 дней вперед от сегодня
  */
 export async function quickFindPowerOutages(
   days: number = 30
 ): Promise<PowerOutageInfo[]> {
   const today = new Date();
-  const dateFrom = new Date(today);
-  dateFrom.setDate(today.getDate() - days);
+  const halfDays = Math.floor(days / 2);
 
-  const url = buildSearchUrl(dateFrom, today);
+  const dateFrom = new Date(today);
+  dateFrom.setDate(today.getDate() - halfDays);
+
+  const dateTo = new Date(today);
+  dateTo.setDate(today.getDate() + halfDays);
+
+  const url = buildSearchUrl(dateFrom, dateTo);
   const callLogger = new ParserCallLogger(
     "quickFind",
     url,
     "GET",
-    { days },
+    { days, dateRange: `${halfDays} дней назад + ${halfDays} дней вперед` },
     MY_PLACE
   );
 

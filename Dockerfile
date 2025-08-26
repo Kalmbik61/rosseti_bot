@@ -98,8 +98,10 @@ RUN npm ci --only=production && npm cache clean --force
 RUN mkdir -p /app/data /app/logs /app/reports && \
     chown -R botuser:botuser /app
 
-# Установка Playwright chromium с правильными правами
-RUN npx playwright install chromium --with-deps && \
+# Создание директории кеша для botuser и установка Playwright
+RUN mkdir -p /home/botuser/.cache && \
+    chown -R botuser:botuser /home/botuser/.cache && \
+    PLAYWRIGHT_BROWSERS_PATH=/home/botuser/.cache/ms-playwright npx playwright install chromium --with-deps && \
     chown -R botuser:botuser /home/botuser/.cache
 
 # Копирование entrypoint скрипта

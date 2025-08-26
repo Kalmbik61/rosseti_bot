@@ -35,10 +35,10 @@ fi
 echo "✅ Проверки прошли успешно"
 
 # Проверка и установка Playwright браузеров при необходимости
-CHROMIUM_PATH="/home/botuser/.cache/ms-playwright/chromium_headless_shell"
-if [ ! -d "$CHROMIUM_PATH" ] || [ -z "$(ls -A $CHROMIUM_PATH 2>/dev/null)" ]; then
+CHROMIUM_PATH="/home/botuser/.cache/ms-playwright"
+if [ ! -d "$CHROMIUM_PATH" ] || [ -z "$(find $CHROMIUM_PATH -name '*chromium*' 2>/dev/null)" ]; then
     echo "🌐 Установка Playwright браузеров..."
-    npx playwright install chromium --with-deps
+    PLAYWRIGHT_BROWSERS_PATH=/home/botuser/.cache/ms-playwright npx playwright install chromium --with-deps
     echo "✅ Playwright браузеры установлены"
 else
     echo "✅ Playwright браузеры уже установлены"

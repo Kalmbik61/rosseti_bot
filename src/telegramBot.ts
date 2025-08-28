@@ -1640,6 +1640,20 @@ ${
           `Telegram: Найдены новые отключения (${newOutages.length}), отправляем уведомления`
         );
 
+        // Сохраняем отчет для команды /get
+        try {
+          const reportPath = await saveReport(
+            newOutages,
+            `subscription-report-${Date.now()}`
+          );
+          logger.info(`Telegram: Сохранен отчет по подписке: ${reportPath}`);
+        } catch (error) {
+          logger.error(
+            "Telegram: Ошибка при сохранении отчета по подписке:",
+            error
+          );
+        }
+
         // Отправляем уведомления всем подписчикам
         for (const subscriber of subscribers) {
           await this.sendNotificationToSubscriber(
@@ -1663,7 +1677,8 @@ ${
     outages: PowerOutageInfo[]
   ): Promise<void> {
     try {
-      const message = `
+      // Основное сообщение с уведомлением
+      const notificationMessage = `
 🔔 *Уведомление о новых отключениях*
 
 📍 Место: ${MY_PLACE}
@@ -1672,15 +1687,25 @@ ${
       }
 📅 Проверено: ${formatDateForDisplay(new Date())}
 
-Используйте /search\\_new для получения подробного отчета.
+Отчет сохранен. Используйте команду /get для получения полного отчета.
 `;
 
-      await this.bot.sendMessage(chatId, message, {
+      await this.bot.sendMessage(chatId, notificationMessage, {
         parse_mode: "Markdown",
       });
 
+      // Отправляем краткую сводку по отключениям (как в командах search)
+      if (outages.length > 0) {
+        const summary = this.createOutagesSummary(outages, true);
+        await this.bot.sendMessage(chatId, summary, {
+          parse_mode: "Markdown",
+        });
+      }
+
       await this.subscriptionManager.updateLastNotified(chatId);
-      logger.info(`Telegram: Отправлено уведомление подписчику ${chatId}`);
+      logger.info(
+        `Telegram: Отправлено уведомление подписчику ${chatId} с полной информацией об отключениях`
+      );
     } catch (error) {
       logger.error(
         `Telegram: Ошибка отправки уведомления подписчику ${chatId}:`,

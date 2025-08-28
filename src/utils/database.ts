@@ -159,6 +159,26 @@ export class DatabaseManager {
       CREATE INDEX IF NOT EXISTS idx_outages_hash ON power_outages(content_hash);
     `);
 
+    // Таблица аналитики пользователей для отслеживания активности
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_analytics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        username TEXT,
+        first_name TEXT,
+        command TEXT,
+        interaction_date TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Индексы для таблицы аналитики пользователей
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_analytics_chat_id ON user_analytics(chat_id);
+      CREATE INDEX IF NOT EXISTS idx_analytics_date ON user_analytics(interaction_date);
+      CREATE INDEX IF NOT EXISTS idx_analytics_command ON user_analytics(command);
+    `);
+
     logger.info("Database: Таблицы созданы/проверены");
   }
 
@@ -660,6 +680,177 @@ export class DatabaseManager {
     } catch (error) {
       logger.error("Database: Ошибка получения статистики отключений:", error);
       throw error;
+    }
+  }
+
+  /**
+   * Запись взаимодействия пользователя для аналитики
+   */
+  recordUserInteraction(
+    chatId: number,
+    command: string,
+    username?: string,
+    firstName?: string
+  ): boolean {
+    try {
+      const stmt = this.db.prepare(`
+        INSERT INTO user_analytics (chat_id, username, first_name, command, interaction_date)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+
+      const result = stmt.run(
+        chatId,
+        username || null,
+        firstName || null,
+        command,
+        new Date().toISOString()
+      );
+
+      return result.changes > 0;
+    } catch (error) {
+      logger.error(
+        "Database: Ошибка записи взаимодействия пользователя:",
+        error
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Получение статистики пользователей
+   */
+  getUserStats(): {
+    totalUsers: number;
+    uniqueUsers: number;
+    activeToday: number;
+    activeThisWeek: number;
+    activeThisMonth: number;
+    topCommands: Array<{ command: string; count: number }>;
+    newUsersToday: number;
+    newUsersThisWeek: number;
+    newUsersThisMonth: number;
+  } {
+    try {
+      // Общее количество пользователей (когда-либо взаимодействовавших)
+      const totalUsersStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count FROM user_analytics
+      `);
+      const totalUsers = (totalUsersStmt.get() as { count: number }).count;
+
+      // Уникальные пользователи за последние 30 дней
+      const uniqueUsersStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count 
+        FROM user_analytics 
+        WHERE interaction_date >= date('now', '-30 days')
+      `);
+      const uniqueUsers = (uniqueUsersStmt.get() as { count: number }).count;
+
+      // Активные сегодня
+      const activeTodayStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count 
+        FROM user_analytics 
+        WHERE date(interaction_date) = date('now')
+      `);
+      const activeToday = (activeTodayStmt.get() as { count: number }).count;
+
+      // Активные за неделю
+      const activeWeekStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count 
+        FROM user_analytics 
+        WHERE interaction_date >= date('now', '-7 days')
+      `);
+      const activeThisWeek = (activeWeekStmt.get() as { count: number }).count;
+
+      // Активные за месяц
+      const activeMonthStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count 
+        FROM user_analytics 
+        WHERE interaction_date >= date('now', '-30 days')
+      `);
+      const activeThisMonth = (activeMonthStmt.get() as { count: number })
+        .count;
+
+      // Топ команд за последний месяц
+      const topCommandsStmt = this.db.prepare(`
+        SELECT command, COUNT(*) as count 
+        FROM user_analytics 
+        WHERE interaction_date >= date('now', '-30 days')
+          AND command IS NOT NULL 
+        GROUP BY command 
+        ORDER BY count DESC 
+        LIMIT 10
+      `);
+      const topCommands = topCommandsStmt.all() as Array<{
+        command: string;
+        count: number;
+      }>;
+
+      // Новые пользователи сегодня
+      const newTodayStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count 
+        FROM user_analytics a1
+        WHERE date(a1.interaction_date) = date('now')
+          AND NOT EXISTS (
+            SELECT 1 FROM user_analytics a2 
+            WHERE a2.chat_id = a1.chat_id 
+              AND date(a2.interaction_date) < date('now')
+          )
+      `);
+      const newUsersToday = (newTodayStmt.get() as { count: number }).count;
+
+      // Новые пользователи за неделю
+      const newWeekStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count 
+        FROM user_analytics a1
+        WHERE a1.interaction_date >= date('now', '-7 days')
+          AND NOT EXISTS (
+            SELECT 1 FROM user_analytics a2 
+            WHERE a2.chat_id = a1.chat_id 
+              AND a2.interaction_date < date('now', '-7 days')
+          )
+      `);
+      const newUsersThisWeek = (newWeekStmt.get() as { count: number }).count;
+
+      // Новые пользователи за месяц
+      const newMonthStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT chat_id) as count 
+        FROM user_analytics a1
+        WHERE a1.interaction_date >= date('now', '-30 days')
+          AND NOT EXISTS (
+            SELECT 1 FROM user_analytics a2 
+            WHERE a2.chat_id = a1.chat_id 
+              AND a2.interaction_date < date('now', '-30 days')
+          )
+      `);
+      const newUsersThisMonth = (newMonthStmt.get() as { count: number }).count;
+
+      return {
+        totalUsers,
+        uniqueUsers,
+        activeToday,
+        activeThisWeek,
+        activeThisMonth,
+        topCommands,
+        newUsersToday,
+        newUsersThisWeek,
+        newUsersThisMonth,
+      };
+    } catch (error) {
+      logger.error(
+        "Database: Ошибка получения статистики пользователей:",
+        error
+      );
+      return {
+        totalUsers: 0,
+        uniqueUsers: 0,
+        activeToday: 0,
+        activeThisWeek: 0,
+        activeThisMonth: 0,
+        topCommands: [],
+        newUsersToday: 0,
+        newUsersThisWeek: 0,
+        newUsersThisMonth: 0,
+      };
     }
   }
 

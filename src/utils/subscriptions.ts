@@ -236,4 +236,34 @@ export class SubscriptionManager {
       logger.error("SubscriptionManager: Ошибка оптимизации БД:", error);
     }
   }
+
+  /**
+   * Получение последней уведомленной версии
+   */
+  getLastNotifiedVersion(): string | null {
+    try {
+      return this.db.getSetting("last_notified_version");
+    } catch (error) {
+      logger.error(
+        "SubscriptionManager: Ошибка получения последней версии:",
+        error
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Сохранение последней уведомленной версии
+   */
+  setLastNotifiedVersion(version: string): void {
+    try {
+      this.db.setSetting("last_notified_version", version);
+      logger.info(
+        `SubscriptionManager: Сохранена версия для уведомлений: ${version}`
+      );
+    } catch (error) {
+      logger.error("SubscriptionManager: Ошибка сохранения версии:", error);
+      throw error;
+    }
+  }
 }

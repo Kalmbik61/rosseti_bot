@@ -21,6 +21,9 @@ import {
   scheduler,
 } from "./utils/index.js";
 import type { PowerOutageInfo } from "./utils/types.js";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 export class PowerOutageBot {
   private bot: TelegramBot;
@@ -41,6 +44,28 @@ export class PowerOutageBot {
         subscriberCount: number;
       }
     | undefined;
+
+  /**
+   * Получение версии приложения из package.json или переменной окружения
+   */
+  private getAppVersion(): string {
+    try {
+      // Сначала проверяем переменную окружения (для Docker/Dokploy)
+      if (process.env.APP_VERSION) {
+        return process.env.APP_VERSION;
+      }
+
+      // Если переменной нет, читаем из package.json
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      const packageJsonPath = join(__dirname, "..", "package.json");
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
+      return packageJson.version || "неизвестная";
+    } catch (error) {
+      logger.error("Ошибка при получении версии приложения:", error);
+      return "неизвестная";
+    }
+  }
 
   constructor(token: string) {
     this.bot = new TelegramBot(token, { polling: false });
@@ -174,6 +199,15 @@ export class PowerOutageBot {
     // Команда /start
     this.bot.onText(/\/start/, async (msg) => {
       const chatId = msg.chat.id;
+
+      // Записываем взаимодействие для аналитики
+      this.recordUserInteraction(
+        chatId,
+        "/start",
+        msg.from?.username,
+        msg.from?.first_name
+      );
+
       const welcomeMessage = `
 🔌 *Бот для мониторинга отключений электричества*
 
@@ -201,6 +235,13 @@ export class PowerOutageBot {
 
     // Команда /get - получить последний отчет
     this.bot.onText(/\/get/, async (msg) => {
+      // Записываем взаимодействие для аналитики
+      this.recordUserInteraction(
+        msg.chat.id,
+        "/get",
+        msg.from?.username,
+        msg.from?.first_name
+      );
       await this.handleGetCommand(msg);
     });
 
@@ -208,6 +249,14 @@ export class PowerOutageBot {
     this.bot.onText(/\/help/, async (msg) => {
       const chatId = msg.chat.id;
       const isAdmin = this.isAdmin(msg.from?.id);
+
+      // Записываем взаимодействие для аналитики
+      this.recordUserInteraction(
+        chatId,
+        "/help",
+        msg.from?.username,
+        msg.from?.first_name
+      );
 
       let helpMessage = `
 📋 *Справка по командам:*
@@ -284,11 +333,25 @@ export class PowerOutageBot {
 
     // Команда /subscribe
     this.bot.onText(/\/subscribe|\/подписка/, async (msg) => {
+      // Записываем взаимодействие для аналитики
+      this.recordUserInteraction(
+        msg.chat.id,
+        "/subscribe",
+        msg.from?.username,
+        msg.from?.first_name
+      );
       await this.handleSubscribeCommand(msg);
     });
 
     // Команда /unsubscribe
     this.bot.onText(/\/unsubscribe|\/отписка/, async (msg) => {
+      // Записываем взаимодействие для аналитики
+      this.recordUserInteraction(
+        msg.chat.id,
+        "/unsubscribe",
+        msg.from?.username,
+        msg.from?.first_name
+      );
       await this.handleUnsubscribeCommand(msg);
     });
 
@@ -1926,6 +1989,14 @@ ${
     const chatId = msg.chat.id;
     const commandName = onlyNew ? "/search_new" : "/search";
 
+    // Записываем взаимодействие для аналитики
+    this.recordUserInteraction(
+      chatId,
+      commandName,
+      msg.from?.username,
+      msg.from?.first_name
+    );
+
     try {
       // Отправляем сообщение о начале поиска
       const processingMsg = await this.bot.sendMessage(
@@ -2180,6 +2251,7 @@ ${
       await db.initialize();
 
       const stats = db.getOutagesStats();
+      const userStats = db.getUserStats();
 
       // Получаем последние 5 отключений для примера
       const recentOutages = db.searchOutages({ limit: 5 });
@@ -2198,9 +2270,9 @@ ${
 
       db.close();
 
-      let message = `📈 *Аналитика отключений*\n\n`;
+      let message = `📈 *Аналитика системы*\n\n`;
 
-      message += `📊 **Общая статистика:**\n`;
+      message += `📊 **Статистика отключений:**\n`;
       message += `• Всего отключений: ${stats.totalOutages}\n`;
       message += `• Уникальных районов: ${stats.uniqueDistricts}\n`;
       message += `• Уникальных мест: ${stats.uniquePlaces}\n`;
@@ -2208,12 +2280,34 @@ ${
         stats.lastOutageDate || "Нет данных"
       }\n\n`;
 
+      message += `👥 **Статистика пользователей:**\n`;
+      message += `• Всего пользователей: ${userStats.totalUsers}\n`;
+      message += `• Активных за месяц: ${userStats.activeThisMonth}\n`;
+      message += `• Активных за неделю: ${userStats.activeThisWeek}\n`;
+      message += `• Активных сегодня: ${userStats.activeToday}\n`;
+      message += `• Новых за месяц: ${userStats.newUsersThisMonth}\n`;
+      message += `• Новых за неделю: ${userStats.newUsersThisWeek}\n`;
+      message += `• Новых сегодня: ${userStats.newUsersToday}\n\n`;
+
       if (sortedDistricts.length > 0) {
         message += `🏆 **Топ районов по количеству отключений:**\n`;
         sortedDistricts.forEach(([district, count], index) => {
           const safeDistrict = escapeMarkdown(district);
           message += `${index + 1}\\. ${safeDistrict}: ${count} отключений\n`;
         });
+        message += `\n`;
+      }
+
+      if (userStats.topCommands.length > 0) {
+        message += `📋 **Популярные команды (за месяц):**\n`;
+        userStats.topCommands
+          .slice(0, 5)
+          .forEach(({ command, count }, index) => {
+            const safeCommand = escapeMarkdown(command);
+            message += `${
+              index + 1
+            }\\. ${safeCommand}: ${count} использований\n`;
+          });
         message += `\n`;
       }
 
@@ -2244,6 +2338,150 @@ ${
   }
 
   /**
+   * Запись взаимодействия пользователя для аналитики
+   */
+  private recordUserInteraction(
+    chatId: number,
+    command: string,
+    username?: string,
+    firstName?: string
+  ): void {
+    try {
+      const db = new DatabaseManager();
+      db.recordUserInteraction(chatId, command, username, firstName);
+      db.close();
+    } catch (error) {
+      // Не логируем ошибки аналитики, чтобы не засорять логи
+      // logger.error("Bot: Ошибка записи аналитики:", error);
+    }
+  }
+
+  /**
+   * Проверка и уведомление об обновлении версии при старте
+   */
+  private async checkAndNotifyVersionUpdate(): Promise<void> {
+    try {
+      const currentVersion = this.getAppVersion();
+      const lastVersion = this.subscriptionManager.getLastNotifiedVersion();
+
+      // Если версия изменилась или это первый запуск
+      if (lastVersion !== currentVersion && currentVersion !== "неизвестная") {
+        logger.info(
+          `Bot: Обнаружена новая версия ${currentVersion} (предыдущая: ${
+            lastVersion || "неизвестна"
+          })`
+        );
+
+        const subscribers = this.subscriptionManager.getSubscribers();
+
+        if (subscribers.length > 0) {
+          // Небольшая задержка перед отправкой уведомлений (даем боту полностью запуститься)
+          setTimeout(async () => {
+            await this.sendAutoUpdateNotification(currentVersion);
+          }, 5000);
+        }
+
+        // Сохраняем текущую версию как уведомленную
+        this.subscriptionManager.setLastNotifiedVersion(currentVersion);
+      }
+    } catch (error) {
+      logger.error("Bot: Ошибка при проверке версии:", error);
+    }
+  }
+
+  /**
+   * Автоматическая отправка уведомления об обновлении всем подписчикам
+   */
+  private async sendAutoUpdateNotification(version: string): Promise<void> {
+    try {
+      const subscribers = this.subscriptionManager.getSubscribers();
+
+      logger.info(
+        `Bot: Отправка автоматических уведомлений об обновлении до версии ${version} - ${subscribers.length} подписчикам`
+      );
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      const updateMessage = `
+🚀 *Бот обновлен!*
+
+📦 **Новая версия:** ${version}
+✨ **Улучшения:**
+• Повышена стабильность работы
+• Улучшена производительность  
+• Исправлены найденные ошибки
+
+🔄 Все функции работают в обычном режиме.
+Используйте /help для просмотра доступных команд.
+`;
+
+      // Рассылаем с задержками для соблюдения лимитов Telegram
+      for (const subscriber of subscribers) {
+        if (!subscriber) {
+          continue;
+        }
+
+        try {
+          await this.bot.sendMessage(subscriber.chatId, updateMessage, {
+            parse_mode: "Markdown",
+          });
+
+          successCount++;
+
+          // Обновляем время последнего уведомления
+          await this.subscriptionManager.updateLastNotified(subscriber.chatId);
+        } catch (error) {
+          errorCount++;
+          logger.warn(
+            `Bot: Не удалось отправить уведомление об обновлении пользователю ${subscriber.chatId}:`,
+            error
+          );
+        }
+
+        // Задержка между сообщениями (30 сообщений в секунду - лимит Telegram)
+        await new Promise((resolve) => setTimeout(resolve, 35));
+      }
+
+      logger.info(
+        `Bot: Автоматические уведомления об обновлении до версии ${version} отправлены. Успешно: ${successCount}/${subscribers.length}`
+      );
+
+      // Уведомляем администраторов о результатах
+      if (ADMIN_CHAT_IDS.length > 0) {
+        const adminMessage = `
+🚀 **Автоматические уведомления об обновлении отправлены**
+
+📦 **Версия:** ${version}
+📊 **Статистика:**
+• Всего получателей: ${subscribers.length}
+• Успешно доставлено: ${successCount}
+• Ошибок доставки: ${errorCount}
+• Успешность: ${Math.round((successCount / subscribers.length) * 100)}%
+`;
+
+        for (const adminId of ADMIN_CHAT_IDS) {
+          try {
+            await this.bot.sendMessage(adminId, adminMessage, {
+              parse_mode: "Markdown",
+            });
+          } catch (error) {
+            logger.warn(
+              `Bot: Не удалось отправить отчет администратору ${adminId}:`,
+              error
+            );
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(
+        "Bot: Ошибка при автоматической отправке уведомлений об обновлении:",
+        error
+      );
+    }
+  }
+
+  /**
    * Форматирование размера файла
    */
   private formatFileSize(bytes: number): string {
@@ -2267,6 +2505,9 @@ ${
     this.isPolling = true;
     console.log("🤖 Telegram бот запущен");
     logger.info("Telegram бот успешно запущен");
+
+    // Проверяем версию и отправляем уведомления при необходимости
+    this.checkAndNotifyVersionUpdate();
   }
 
   /**
